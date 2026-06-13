@@ -15,7 +15,7 @@
 <template>
   <main class="p-28">
     <h1 class="text-3xl leading-10 font-bold">Generate script</h1>
-    <GenerateScript />
+    <GenerateScript :active-tab="'ALL'" />
   </main>
 </template>
 <style scoped></style>

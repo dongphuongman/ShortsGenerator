@@ -20,11 +20,11 @@ services:
       - ./Backend:/home/app/Backend
     restart: unless-stopped
 
-  nuxt:
-    build:
-      context: .
-      dockerfile: Dockerfile.FE.Nuxt
-    env_file:
-      - .env
-    ports:
-      - ${FE_NUXT}:3000
+  # nuxt:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.FE.Nuxt
+  #   env_file:
+  #     - .env
+  #   ports:
+  #     - ${FE_NUXT}:3000

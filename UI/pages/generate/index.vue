@@ -23,6 +23,32 @@ const API_URL = "http://localhost:8080";
 const { globalSettings } = useGlobalSettings();
 const { video } = useVideoSettings();
 
+// Load subtitle templates from API
+const { data: settingsData } = await $fetch<{ data: any }>(`${API_URL}/api/settings`);
+const subtitleTemplateOptions = computed(() => {
+  return settingsData.value?.data?.subtitleTemplates?.options?.map((t: any) => ({
+    label: t.label,
+    value: t.value,
+  })) || [
+    { label: 'Classic Yellow', value: 'classic' },
+    { label: 'Modern Glow', value: 'modern_glow' },
+    { label: 'Bold Outline', value: 'bold_outline' },
+    { label: 'Minimal', value: 'minimal' },
+    { label: 'Cinematic', value: 'cinematic' },
+  ];
+});
+
+// Add video segment function
+const addVideoSegment = () => {
+  if (video.value.selectedVideoUrls.length > 0) {
+    video.value.videoSegments.push({
+      url: video.value.selectedVideoUrls[0].url,
+      startTime: 0,
+      endTime: 10,
+    });
+  }
+};
+
 const showModal = ref(!video.value.script);
 const extraPrompt = ref(false);
 
@@ -124,6 +150,12 @@ const HandleGenerateVideo = async () => {
         search: video.value.search.split(","),
         aiModel: video.value.aiModel || globalSettings.value.aiModel,
         selectedVideoUrls: video.value.selectedVideoUrls,
+        subtitlesPosition: video.value.subtitlePosition
+          ? `center,${video.value.subtitlePosition}`
+          : "",
+        subtitleTemplate: video.value.subtitleTemplate || "classic",
+        aspectRatio: video.value.aspectRatio || "9:16",
+        customSubtitle: video.value.customSubtitle || "",
       },
     });
     video.value.finalVideoUrl = data.finalVideo;
@@ -155,14 +187,29 @@ const HandleUpdateSettings = async (
 const HandleAddAudio = async () => {
   try {
     currentState.value = "loading";
+    const musicSource = video.value.musicSource || "library";
+    const songPath =
+      musicSource === "library" ? video.value.selectedAudio || "" : "";
+    const backgroundMusicFromVideo =
+      musicSource === "video" ? video.value.backgroundMusicFromVideo || "" : "";
+    const hasMusic =
+      (musicSource === "library" && !!songPath) ||
+      (musicSource === "video" && !!backgroundMusicFromVideo);
+    if (!hasMusic) {
+      currentState.value = "script";
+      return;
+    }
     const { data } = await $fetch<{ data: { finalVideo: string } }>(
       `${API_URL}/api/addAudio`,
       {
         method: "POST",
         body: {
           finalVideo: video.value.finalVideoUrl,
-          songPath: video.value.selectedAudio,
+          songPath,
           aiModel: video.value.aiModel || globalSettings.value.aiModel,
+          musicSource,
+          backgroundMusicFromVideo,
+          aspectRatio: video.value.aspectRatio || "9:16",
         },
       }
     );
@@ -285,6 +332,50 @@ function handleStateChange(state: number) {
             <n-button ghost type="primary" class="mt-5" @click="HandleOpenSearchVideo">
               Search and select videos
             </n-button>
+            
+            <!-- Video Segment Selection -->
+            <div v-if="video.selectedVideoUrls.length > 0" class="mt-4 p-3 bg-slate-200 dark:bg-slate-700 rounded-lg">
+              <div class="text-sm font-bold mb-2">Video Segments (from - to):</div>
+              <div v-for="(seg, idx) in video.videoSegments" :key="idx" class="flex items-center gap-2 mb-2">
+                <span class="text-xs truncate w-20">{{ seg.url.split('/').pop() }}</span>
+                <n-input-number
+                  v-model:value="seg.startTime"
+                  :min="0"
+                  :max="seg.endTime"
+                  size="small"
+                  class="w-16"
+                  placeholder="Start"
+                />
+                <span>-</span>
+                <n-input-number
+                  v-model:value="seg.endTime"
+                  :min="seg.startTime"
+                  size="small"
+                  class="w-16"
+                  placeholder="End"
+                />
+                <n-button size="small" quaternary @click="video.videoSegments.splice(idx, 1)">
+                  <Icon name="ph:trash" />
+                </n-button>
+              </div>
+              <n-button size="small" quaternary @click="addVideoSegment">
+                <Icon name="ph:plus" /> Add Segment
+              </n-button>
+            </div>
+          </section>
+          <section class="aspect-ratio dark:bg-slate-800 bg-slate-100 rounded-lg min-h-40 p-5">
+            <header class="flex items-center">
+              <Icon name="icon-park-outline:square-small" size="24" />
+              <span class="text-lg ml-2">Aspect Ratio</span>
+            </header>
+            <article class="mt-8 opacity-80">
+              <n-radio-group v-model:value="video.aspectRatio" name="aspectRatio" class="flex flex-wrap gap-2">
+                <n-radio-button value="9:16">9:16</n-radio-button>
+                <n-radio-button value="16:9">16:9</n-radio-button>
+                <n-radio-button value="1:1">1:1</n-radio-button>
+                <n-radio-button value="4:5">4:5</n-radio-button>
+              </n-radio-group>
+            </article>
           </section>
           <section class="voice dark:bg-slate-800 bg-slate-100 rounded-lg min-h-40 p-5">
             <header class="flex items-center">
@@ -321,11 +412,38 @@ function handleStateChange(state: number) {
                 </n-button>
               </div>
             </header>
-            <article class="mt-8 opacity-80 flex items-center">
+            
+            <!-- Music Source Selection -->
+            <div class="mt-4">
+              <n-radio-group v-model:value="video.musicSource" name="musicSource" size="small">
+                <n-radio-button value="library">From Library</n-radio-button>
+                <n-radio-button value="video">From Video</n-radio-button>
+              </n-radio-group>
+            </div>
+            
+            <!-- From Video Selection -->
+            <div v-if="video.musicSource === 'video'" class="mt-3">
+              <n-select
+                v-model:value="video.backgroundMusicFromVideo"
+                :options="video.selectedVideoUrls.map((v, i) => ({
+                  label: v.url.split('/').pop() || `Video ${i + 1}`,
+                  value: v.url
+                }))"
+                placeholder="Select video for audio"
+                size="small"
+              />
+            </div>
+            
+            <article class="mt-4 opacity-80 flex items-center">
               <section class="w-10 h-10 bg-slate-950 rounded-md"></section>
               <section class="ml-2 flex flex-col text-sm">
-                <span>{{ video.selectedAudio || "No music selected" }}</span>
-                <span class="opacity-60">Sombreros Musical</span>
+                <span v-if="video.backgroundMusicFromVideo">
+                  🎵 From video: {{ video.backgroundMusicFromVideo.split('/').pop() }}
+                </span>
+                <span v-else-if="video.selectedAudio">
+                  {{ video.selectedAudio }}
+                </span>
+                <span v-else class="opacity-60">No music selected</span>
               </section>
             </article>
           </section>
@@ -343,9 +461,44 @@ function handleStateChange(state: number) {
                 </n-button>
               </div>
             </header>
-            <article class="mt-8 opacity-80 text-center flex items-center justify-center">
+            
+            <!-- Subtitle Template Selection -->
+            <div class="mt-4">
+              <n-select
+                v-model:value="video.subtitleTemplate"
+                :options="subtitleTemplateOptions"
+                placeholder="Select template"
+                size="small"
+              />
+            </div>
+            
+            <!-- Custom Subtitle Input -->
+            <div class="mt-3">
+              <n-collapse>
+                <n-collapse-item title="Custom Subtitle" name="custom">
+                  <n-input
+                    v-model:value="video.customSubtitle"
+                    type="textarea"
+                    placeholder="Enter custom subtitle text..."
+                    :autosize="{ minRows: 2, maxRows: 4 }"
+                  />
+                </n-collapse-item>
+              </n-collapse>
+            </div>
+            
+            <!-- Position Selector -->
+            <div class="mt-3">
+              <span class="text-sm opacity-70">Position:</span>
+              <n-radio-group v-model:value="video.subtitlePosition" class="ml-2">
+                <n-radio-button value="top">Top</n-radio-button>
+                <n-radio-button value="center">Center</n-radio-button>
+                <n-radio-button value="bottom">Bottom</n-radio-button>
+              </n-radio-group>
+            </div>
+            
+            <article class="mt-4 opacity-80 text-center flex items-center justify-center">
               <span class="font-black text-lg" :style="{ color: globalSettings.color }">
-                Subtitle here
+                {{ video.customSubtitle || 'Preview text' }}
               </span>
             </article>
           </section>
@@ -355,7 +508,13 @@ function handleStateChange(state: number) {
             <n-button type="tertiary" dashed size="large" @click="HandleGenerateVideo">Regenerate</n-button>
             <n-button type="tertiary" dashed size="large" @click="HandleClear">Clear</n-button>
 
-            <n-button type="success" dashed size="large" @click="HandleAddAudio" :disabled="!video.selectedAudio">
+            <n-button
+              type="success"
+              dashed
+              size="large"
+              @click="HandleAddAudio"
+              :disabled="!(video.musicSource === 'video' ? video.backgroundMusicFromVideo : video.selectedAudio)"
+            >
               Add Music
             </n-button>
             <n-button type="default" dashed size="large" @click="HandleClearAndGoToVideos">
@@ -372,7 +531,7 @@ function handleStateChange(state: number) {
               </section>
               <!-- Video placeholder -->
               <video v-else class="aspect-[9/16] max-w-sm rounded-3xl"
-                :src="`http://localhost:8080/${video.finalVideoUrl}`" controls></video>
+                :src="`/api/video/${video.finalVideoUrl.split('/').pop()}`" controls></video>
             </div>
           </section>
         </section>

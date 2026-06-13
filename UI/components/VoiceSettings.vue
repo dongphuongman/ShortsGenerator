@@ -12,16 +12,31 @@
  */
 
 const { API_SETTINGS } = useApiSettings();
-const voiceOptions = ref<{ label: string; value: string }[]>([]);
+const voiceOptions = ref<{ label: string; value: string; description?: string }[]>([]);
+const voiceStyles = ref<Record<string, { name: string; description: string; gender: string }>>({});
+const selectedVoice = ref("M3");
 
 const { video } = useVideoSettings();
 
-const { data } = await $fetch<{ data: { voices: string[] } }>(
+const res = await $fetch<{ data: { voices: string[]; voiceStyles?: Record<string, { name: string; description: string; gender: string }> } }>(
   `${API_SETTINGS.value.URL}/api/models`
 );
-voiceOptions.value = data.voices.map((voice) => {
-  return { label: voice, value: voice };
-});
+const data = res.data;
+if (data.voiceStyles) {
+  voiceStyles.value = data.voiceStyles;
+  voiceOptions.value = data.voices.map((v) => ({
+    label: `${v} - ${data.voiceStyles?.[v]?.name || v} (${data.voiceStyles?.[v]?.gender || ""})`,
+    value: v,
+    description: data.voiceStyles?.[v]?.description,
+  }));
+} else {
+  voiceOptions.value = data.voices.map((v) => ({ label: v, value: v }));
+}
+// If user has a saved voice, use it; otherwise default to M3
+if (video.value.voice) {
+  selectedVoice.value = video.value.voice;
+}
+video.value.voice = selectedVoice.value;
 </script>
 
 <template>

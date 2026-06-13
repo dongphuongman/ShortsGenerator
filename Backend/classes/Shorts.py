@@ -83,6 +83,9 @@ class Shorts:
 
         # Subtitle
         self.subtitles_position=""
+        self.subtitle_template = "classic"
+        self.aspect_ratio = "9:16"
+        self.custom_subtitle = ""
         self.final_music_video_path=""
 
     @property
@@ -235,7 +238,9 @@ class Shorts:
                     }
                 )
             try:
-                saved_video_path = save_video(video_url)
+                # Construct the absolute path to the static/assets/temp directory
+                temp_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "assets", "temp"))
+                saved_video_path = save_video(video_url, directory=temp_dir_path)
                 print(colored(f"[+] Saved video: {saved_video_path}", "green"))
                 video_paths.append(saved_video_path)
             except Exception:
@@ -254,106 +259,199 @@ class Shorts:
         # Write the metadata in a json file with the video title as the filename
         self.WriteMetadataToFile(self.video_title, self.video_description, self.video_tags)
         
-    def GenerateVoice(self,voice):
+    def GenerateVoice(self, voice):
         print(colored(f"[X] Generating voice: {voice} ", "green"))
         global GENERATING
         self.voice = voice
-        self.voice_prefix = self.voice[:2]
+        self.voice_prefix = voice[:2]
 
-        # Split script into sentences
-        sentences = self.final_script.split(". ")
+        if self.custom_subtitle and self.custom_subtitle.strip():
+            sentences = [s.strip() for s in self.custom_subtitle.split(". ") if s.strip()]
+        else:
+            # Split script into sentences for subtitle generation
+            sentences = self.final_script.split(". ")
+            sentences = list(filter(lambda x: x != "", sentences))
 
-        # Remove empty strings
-        sentences = list(filter(lambda x: x != "", sentences))
+        temp_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "assets", "temp"))
         paths = []
+        self.tts_path = None
+        engine = get_tts_engine()
 
-        # Generate TTS for every sentence
-        for sentence in sentences:
+        if engine == "supertonic":
             if not GENERATING:
-                return jsonify(
-                    {
-                        "status": "error",
-                        "message": "Video generation was cancelled.",
-                        "data": [],
-                    }
-                )
+                return jsonify({"status": "error", "message": "Video generation was cancelled.", "data": []})
+
+            tts_settings = get_tts_settings()
             fileId = uuid4()
-            current_tts_path = os.path.join("static/assets/temp", f"{fileId}.mp3")
-            tts(sentence, self.voice, filename=current_tts_path)
+            supertonic_path = os.path.join(temp_dir_path, f"{fileId}.mp3")
 
-            # Add the audio clip to the list
-            print(colored(f"[X] Save Audio ", "green"))
-            audio_clip = AudioFileClip(os.path.join("static/assets/temp", f"{fileId}.mp3"))
-            paths.append(audio_clip)
+            result = tts_with_fallback(
+                self.final_script,
+                self.voice,
+                filename=supertonic_path,
+                lang=tts_settings.get("tts_lang", "en"),
+                quality=tts_settings.get("tts_quality", 8),
+                speed=tts_settings.get("tts_speed", 1.05),
+            )
 
-        # Combine all TTS files using moviepy
+            if result["success"] and os.path.exists(supertonic_path):
+                audio_clip = AudioFileClip(supertonic_path)
+                paths = [audio_clip]
+                self.tts_path = supertonic_path
+                print(colored(f"[+] Supertonic generated full audio ({len(sentences)} sentences in one call)", "green"))
+            else:
+                print(colored("[-] Supertonic failed, using TikTok sentence-by-sentence fallback", "yellow"))
 
-        print(colored(f"[X] Start saving the audio ", "green"))
-        final_audio = concatenate_audioclips(paths)
-        self.tts_path = os.path.join("static/assets/temp", f"{uuid4()}.mp3")
-        final_audio.write_audiofile(self.tts_path)
+        # Fallback: TikTok sentence-by-sentence
+        if not paths:
+            tiktok_voice = "en_us_001"
+            print(colored(f"[*] Using TikTok TTS sentence-by-sentence (voice: {tiktok_voice})", "yellow"))
+            for sentence in sentences:
+                if not GENERATING:
+                    return jsonify({"status": "error", "message": "Video generation was cancelled.", "data": []})
+                fileId = uuid4()
+                current_tts_path = os.path.join(temp_dir_path, f"{fileId}.mp3")
+                tts_with_fallback(sentence, tiktok_voice, filename=current_tts_path)
+                if os.path.exists(current_tts_path):
+                    try:
+                        audio_clip = AudioFileClip(current_tts_path)
+                        paths.append(audio_clip)
+                    except Exception as e:
+                        print(colored(f"[-] Failed to load audio clip: {e}", "red"))
 
-        # Generate the subtitles
-        try:
-            self.subtitles_path = generate_subtitles(audio_path=self.tts_path, sentences=sentences, audio_clips=paths, voice=self.voice_prefix)
-        except Exception as e:
-            print(colored(f"[-] Error generating subtitles: {e}", "red"))
+            if paths:
+                print(colored(f"[X] Combining {len(paths)} sentence audio files", "green"))
+                final_audio = concatenate_audioclips(paths)
+                self.tts_path = os.path.join(temp_dir_path, f"{uuid4()}.mp3")
+                final_audio.write_audiofile(self.tts_path)
+            else:
+                print(colored("[-] No audio clips generated", "red"))
+
+        # Generate subtitles
+        if paths and self.tts_path and os.path.exists(self.tts_path):
+            try:
+                self.subtitles_path = generate_subtitles(audio_path=self.tts_path, sentences=sentences, voice=self.voice_prefix)
+            except Exception as e:
+                print(colored(f"[-] Error generating subtitles: {e}", "red"))
+                self.subtitles_path = None
+        else:
+            print(colored("[-] No audio generated for subtitles", "red"))
             self.subtitles_path = None
 
     def CombineVideos(self):
         temp_audio = AudioFileClip(self.tts_path)
         n_threads = 2
-        combined_video_path = combine_videos(self.video_paths, temp_audio.duration, 10, n_threads or 2)
+        aspect_ratio = getattr(self, "aspect_ratio", "9:16") or "9:16"
+        subtitle_template = getattr(self, "subtitle_template", "classic") or "classic"
+        combined_video_path = combine_videos(
+            self.video_paths,
+            temp_audio.duration,
+            10,
+            n_threads or 2,
+            aspect_ratio=aspect_ratio,
+        )
 
         print(colored(f"[-] Next step: {combined_video_path}", "green"))
         # Put everything together
         try:
-            self.final_video_path = generate_video(combined_video_path, self.tts_path, self.subtitles_path, n_threads or 2, self.subtitles_position)
+            self.final_video_path = generate_video(
+                combined_video_path,
+                self.tts_path,
+                self.subtitles_path,
+                n_threads or 2,
+                self.subtitles_position,
+                subtitle_template=subtitle_template,
+                aspect_ratio=aspect_ratio,
+            )
         except Exception as e:
             print(colored(f"[-] Error generating final video: {e}", "red"))
             self.final_video_path = None
 
-    def WriteMetadataToFile(video_title, video_description, video_tags):
-            metadata = {
-                "title": video_title,
-                "description": video_description,
-                "tags": video_tags
-            }
-            # Remplace spaces with underscores
-            fileName = video_title.replace(" ", "_")
+    def WriteMetadataToFile(self, video_title, video_description, video_tags):
+        metadata = {
+            "title": video_title,
+            "description": video_description,
+            "tags": video_tags
+        }
+        if self.final_video_path:
+            basename = os.path.splitext(os.path.basename(self.final_video_path))[0]
+        else:
+            basename = video_title.replace(" ", "_")
 
-            with open(os.path.join("static/generated_videos", f"{fileName}.json"), "w") as file:
-                json.dump(metadata, file) 
+        dest_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "generated_videos"))
+        filepath = os.path.join(dest_dir, f"{basename}.json")
+        with open(filepath, "w") as file:
+            json.dump(metadata, file, indent=2) 
 
-    def AddMusic(self, use_music,custom_song_path=""):
-        video_clip = VideoFileClip(f"{self.final_video_path}")
+    def AddMusic(self, use_music, custom_song_path="", music_source="library"):
+        try:
+            video_clip = VideoFileClip(f"{self.final_video_path}")
+        except Exception as e:
+            print(colored(f"[-] Could not open final video for music: {e}", "red"))
+            return
 
         self.final_music_video_path = f"{uuid4()}-music.mp4"
         n_threads = 2
-        if use_music:
-            # if no song path choose random song
-            song_path = os.path.join("static/assets/music", custom_song_path)
-            if not custom_song_path:
-                song_path = choose_random_song()
-            
+        dest_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "generated_videos"))
 
-            # Add song to video at 30% volume using moviepy
+        if not use_music:
+            try:
+                video_clip.write_videofile(
+                    os.path.join(dest_dir, self.final_music_video_path),
+                    threads=n_threads or 1,
+                )
+            except Exception as e:
+                print(colored(f"[-] Could not write final video: {e}", "red"))
+            try:
+                video_clip.close()
+            except Exception:
+                pass
+            return
+
+        try:
             original_duration = video_clip.duration
             original_audio = video_clip.audio
-            song_clip = AudioFileClip(song_path).set_fps(44100)
 
-            # Set the volume of the song to 10% of the original volume
+            if music_source == "video" and custom_song_path and os.path.exists(custom_song_path):
+                song_clip = AudioFileClip(custom_song_path).set_fps(44100)
+            else:
+                music_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "assets", "music"))
+                if custom_song_path:
+                    candidate = os.path.join(music_dir, custom_song_path)
+                    song_path = candidate if os.path.exists(candidate) else choose_random_song()
+                else:
+                    song_path = choose_random_song()
+                song_clip = AudioFileClip(song_path).set_fps(44100)
+
             song_clip = song_clip.volumex(0.1).set_fps(44100)
 
-            # Add the song to the video
             comp_audio = CompositeAudioClip([original_audio, song_clip])
             video_clip = video_clip.set_audio(comp_audio)
             video_clip = video_clip.set_fps(30)
             video_clip = video_clip.set_duration(original_duration)
 
-            video_clip.write_videofile(os.path.join("static/generated_videos", self.final_music_video_path), threads=n_threads or 1)
-        else:
-            video_clip.write_videofile(os.path.join("static/generated_videos", self.final_music_video_path), threads=n_threads or 1)
+            video_clip.write_videofile(
+                os.path.join(dest_dir, self.final_music_video_path),
+                threads=n_threads or 1,
+            )
+
+            try:
+                video_clip.close()
+            except Exception:
+                pass
+            try:
+                song_clip.close()
+            except Exception:
+                pass
+        except Exception as e:
+            print(colored(f"[-] Error adding music: {e}", "red"))
+            try:
+                video_clip.write_videofile(
+                    os.path.join(dest_dir, self.final_music_video_path),
+                    threads=n_threads or 1,
+                )
+            except Exception as ee:
+                print(colored(f"[-] Could not write fallback video: {ee}", "red"))
 
     def Stop(self):
         global GENERATING

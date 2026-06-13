@@ -12,6 +12,12 @@ export interface VideoResultFormat {
   type?: "local" | "remote"
 }
 
+export interface VideoSegment {
+  url: string;
+  startTime: number;
+  endTime: number;
+}
+
 export const useVideoSettings = () => {
   const video = useStorage<{
     script: string;
@@ -23,9 +29,16 @@ export const useVideoSettings = () => {
     finalVideoUrl: string;
     selectedAudio: string;
     selectedVideoUrls: VideoResultFormat[];
+    aspectRatio: string;
+    subtitleTemplate: string;
+    subtitlePosition: string;
+    customSubtitle: string;
+    videoSegments: VideoSegment[];
+    backgroundMusicFromVideo: string;
+    musicSource: "library" | "video";
   }>('VideoSettings', {
     script: "",
-    voice: "en_us_001",
+    voice: "",
     videoSubject: "",
     extraPrompt: "",
     search: "",
@@ -33,10 +46,15 @@ export const useVideoSettings = () => {
     aiModel: "g4f",
 
     finalVideoUrl: "",
-    //   Audio related 
-
     selectedAudio: "",
     selectedVideoUrls: [],
+    aspectRatio: "9:16",
+    subtitleTemplate: "classic",
+    subtitlePosition: "bottom",
+    customSubtitle: "",
+    videoSegments: [],
+    backgroundMusicFromVideo: "",
+    musicSource: "library",
   });
 
 

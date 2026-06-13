@@ -7,8 +7,13 @@ RUN apt-get -y update && \
     ffmpeg \
     imagemagick \
     procps \
-    fonts-liberation && \
-    apt-get clean && \
+    fonts-liberation \
+    python3-dev \
+    libgstreamer1.0-dev \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    espeak-ng \
+    && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Set up locale
@@ -21,7 +26,9 @@ RUN apt-get update && apt-get install -y locales && \
 ENV LC_ALL C.UTF-8
 
 # Modify ImageMagick policy to allow text operations
-RUN sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml 
+RUN sed -i 's/none/read,write/g' /etc/ImageMagick/policy.xml 2>/dev/null || \
+    sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml 2>/dev/null || \
+    echo "ImageMagick policy not found, skipping"
 
 # Set environment variables
 # ENV IMAGEMAGICK_BINARY=/usr/bin/convert

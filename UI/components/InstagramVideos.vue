@@ -1,6 +1,12 @@
 <script lang="ts" setup>
+interface VideoItem {
+  filename: string
+  url: string
+  metadata: { title: string; description: string; tags: string[] } | null
+}
+
 const loading = ref(true)
-const instagramVideos = ref<string[]>([])
+const instagramVideos = ref<VideoItem[]>([])
 const { video } = useVideoSettings()
 const URL = useApiSettings().API_SETTINGS.value.URL;
 // Fetch Instagram videos
@@ -69,24 +75,24 @@ onMounted(() => {
         <div v-else>
             <!-- Video Grid -->
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div v-for="video in instagramVideos" :key="video" class="video-card">
+                <div v-for="item in instagramVideos" :key="item.filename" class="video-card">
                     <div class="relative bg-slate-800 rounded-lg overflow-hidden group">
                         <!-- Video Preview -->
                         <video class="w-full aspect-[9/16] object-cover"
-                            :src="`${URL}/static/generated_videos/instagram/${video}`" controls></video>
+                            :src="`${URL}${item.url}`" controls crossorigin="anonymous"></video>
 
                         <!-- Overlay with Actions -->
                         <div
                             class="absolute inset-0 bottom-10 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                             <div class="space-y-2">
                                 <!-- Select Button -->
-                                <n-button type="primary" size="small" class="mx-2" :disabled="isVideoSelected(video)"
-                                    @click="handleSelectVideo(video)">
-                                    {{ isVideoSelected(video) ? 'Selected' : 'Select' }}
+                                <n-button type="primary" size="small" class="mx-2" :disabled="isVideoSelected(item.filename)"
+                                    @click="handleSelectVideo(item.filename)">
+                                    {{ isVideoSelected(item.filename) ? 'Selected' : 'Select' }}
                                 </n-button>
 
                                 <!-- Delete Button -->
-                                <n-button type="error" size="small" class="mx-2" @click="handleDeleteVideo(video)">
+                                <n-button type="error" size="small" class="mx-2" @click="handleDeleteVideo(item.filename)">
                                     Unselect
                                 </n-button>
                             </div>
@@ -96,7 +102,7 @@ onMounted(() => {
                     <!-- Video Name -->
                     <div class="mt-2 px-2">
                         <p class="text-sm text-gray-500 dark:text-gray-400 truncate">
-                            {{ video }}
+                            {{ item.metadata?.title || item.filename }}
                         </p>
                     </div>
                 </div>

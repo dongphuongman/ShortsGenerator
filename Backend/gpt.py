@@ -1,7 +1,7 @@
 import re
 import json
 import g4f
-# from openai import OpenAI
+from g4f.models import Model, ModelUtils
 from typing import Tuple, List  
 from termcolor import colored
 from dotenv import load_dotenv
@@ -16,17 +16,14 @@ else:
 
 # Set environment variables
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-# openai.api_key = OPENAI_API_KEY
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
-genai.configure(api_key=GOOGLE_API_KEY)
 
-# openaiClient = OpenAI(
-#     api_key=OPENAI_API_KEY ,  # This is the default and can be omitted
-# )
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
 
-# Configure g4f
-g4f.debug.logging = True  # Enable debug logging
-g4f.debug.version_check = False  # Disable automatic version checking
+# Configure g4f - enable auto update and logging
+g4f.version_checking = False
+g4f.debug.logging = True
 
 def generate_response(prompt: str, ai_model: str) -> str:
     """
@@ -41,22 +38,15 @@ def generate_response(prompt: str, ai_model: str) -> str:
     """
 
     if ai_model == 'g4f':
-        client = g4f.Client()
+        from g4f.client import Client
+        from g4f import Provider
+        client = Client(provider=Provider.Gemini)
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gemini-2.0-flash",
             messages=[{"role": "user", "content": prompt}],
-            stream=False
-            # Add any other necessary parameters
+            web_search=False
         )
-        return response if isinstance(response, str) else str(response.choices[0].message.content)
-
-    # elif ai_model in ["gpt3.5-turbo", "gpt4"]:
-        
-    #     model_name = "gpt-3.5-turbo" if ai_model == "gpt3.5-turbo" else "gpt-4-1106-preview"
-    #     response = openaiClient.chat.completions.create(
-    #         model=model_name,
-    #         messages=[{"role": "user", "content": prompt}],
-    #     ).choices[0].message.content
+        return response.choices[0].message.content
 
     elif ai_model == 'gemmini':
         model = genai.GenerativeModel('gemini-pro')
@@ -152,35 +142,47 @@ def get_search_terms(video_subject: str, amount: int, script: str, ai_model: str
 def generate_metadata(video_subject: str, script: str, ai_model: str) -> Tuple[str, str, List[str]]:  
     """  
     Generate metadata for a YouTube video, including the title, description, and keywords.  
-  
+
     Args:  
         video_subject (str): The subject of the video.  
         script (str): The script of the video.  
         ai_model (str): The AI model to use for generation.  
-  
+
     Returns:  
         Tuple[str, str, List[str]]: The title, description, and keywords for the video.  
     """  
-  
+
     # Build prompt for title  
     title_prompt = f"""  
-    Generate a catchy and SEO-friendly title for a YouTube shorts video about {video_subject}.  
+    You are an expert YouTube Shorts title writer. Generate a single catchy, SEO-optimized title for a video based on the following script.  
+    The title must be attention-grabbing, under 60 characters, and directly reflect the content of the script.  
+    Return ONLY the title text — no quotes, no explanations, no extra formatting.  
+
+    Video Subject: {video_subject}  
+
+    Script:  
+    {script}  
     """  
-  
+
     # Generate title  
-    title = generate_response(title_prompt, ai_model).strip()  
+    title = generate_response(title_prompt, ai_model).strip().strip('"').strip("'")  
     
     # Build prompt for description  
     description_prompt = f"""  
-    Write a brief and engaging description for a YouTube shorts video about {video_subject}.  
-    The video is based on the following script:  
+    You are an expert YouTube Shorts description writer. Write a brief, engaging description for a video based on the following script.  
+    The description should include relevant hashtags and be optimized for discovery.  
+    Return ONLY the description text — no extra formatting or explanations.  
+
+    Video Subject: {video_subject}  
+
+    Script:  
     {script}  
     """  
-  
+
     # Generate description  
     description = generate_response(description_prompt, ai_model).strip()  
-  
+
     # Generate keywords  
     keywords = get_search_terms(video_subject, 6, script, ai_model)  
 
-    return title, description, keywords  
+    return title, description, keywords

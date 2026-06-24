@@ -6,7 +6,7 @@ from typing import Tuple, List
 from termcolor import colored
 from dotenv import load_dotenv
 import os
-import google.generativeai as genai
+from google import genai
 
 # Load environment variables
 if os.path.exists(".env"):
@@ -18,8 +18,7 @@ else:
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
+client = genai.Client(api_key=GOOGLE_API_KEY) if GOOGLE_API_KEY else None
 
 # Configure g4f - enable auto update and logging
 g4f.version_checking = False
@@ -42,16 +41,17 @@ def generate_response(prompt: str, ai_model: str) -> str:
         from g4f import Provider
         client = Client(provider=Provider.Gemini)
         response = client.chat.completions.create(
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             messages=[{"role": "user", "content": prompt}],
             web_search=False
         )
         return response.choices[0].message.content
 
     elif ai_model == 'gemmini':
-        model = genai.GenerativeModel('gemini-pro')
-        response_model = model.generate_content(prompt)
-        response = response_model.text
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt
+        ).text
 
     else:
         raise ValueError("Invalid AI model selected.")

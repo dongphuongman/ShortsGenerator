@@ -18,45 +18,47 @@ export interface VideoSegment {
   endTime: number;
 }
 
+export interface UploadedImage {
+  path: string;
+  name: string;
+  duration: number;
+}
+
 export const useVideoSettings = () => {
-  const video = useStorage<{
-    script: string;
-    voice: string;
-    videoSubject: string;
-    extraPrompt: string;
-    search: string;
-    aiModel: string;
-    finalVideoUrl: string;
-    selectedAudio: string;
-    selectedVideoUrls: VideoResultFormat[];
-    aspectRatio: string;
-    subtitleTemplate: string;
-    subtitlePosition: string;
-    customSubtitle: string;
-    videoSegments: VideoSegment[];
-    backgroundMusicFromVideo: string;
-    musicSource: "library" | "video";
-  }>('VideoSettings', {
+  const defaults = {
     script: "",
     voice: "",
     videoSubject: "",
     extraPrompt: "",
     search: "",
-
     aiModel: "g4f",
-
     finalVideoUrl: "",
     selectedAudio: "",
-    selectedVideoUrls: [],
+    selectedVideoUrls: [] as VideoResultFormat[],
     aspectRatio: "9:16",
     subtitleTemplate: "classic",
     subtitlePosition: "bottom",
     customSubtitle: "",
-    videoSegments: [],
+    videoSegments: [] as VideoSegment[],
     backgroundMusicFromVideo: "",
-    musicSource: "library",
-  });
+    musicSource: "library" as const,
+    scriptTemplate: "viral_shorts",
+    useCustomAudio: false,
+    customAudioPath: "",
+    audioStartTime: 0,
+    audioEndTime: 0,
+    images: [] as UploadedImage[],
+    imageDuration: 5,
+  }
 
+  const video = useStorage<typeof defaults>('VideoSettings', { ...defaults })
+
+  // Migrate old stored data: ensure all keys from defaults exist
+  for (const key of Object.keys(defaults)) {
+    if (!(key in video.value)) {
+      ;(video.value as any)[key] = (defaults as any)[key]
+    }
+  }
 
   return { video }
 }

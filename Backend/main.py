@@ -1,5 +1,7 @@
 import os
+import subprocess
 import requests
+from datetime import datetime
 from utils import *
 from dotenv import load_dotenv
 
@@ -28,6 +30,9 @@ from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from moviepy.config import change_settings
 from classes.instagram_downloader import InstagramDownloader
+from leadgen.adapters.devtools_adapter import DevToolsAdapter
+from leadgen.enrichment import enrich_campaign_description, enrich_campaign_with_website, enhance_profile_analysis, find_related_niche_queries, suggest_engagement, analyze_competitor, analyze_viral_post, generate_lead_keywords, generate_engagement_keywords, generate_synthetic_leads, qualify_search_results
+from leadgen.campaign_store import create_campaign, get_campaigns, get_campaign, delete_campaign, add_lead, get_leads, add_competitor, remove_competitor, add_viral_post
 
 # Set environment variables
 SESSION_ID = os.getenv("TIKTOK_SESSION_ID")
@@ -37,7 +42,7 @@ change_settings({"IMAGEMAGICK_BINARY": os.getenv("IMAGEMAGICK_BINARY")})
 
 # Initialize Flask
 app = Flask(__name__, static_folder="static", static_url_path="/static")
-CORS(app, expose_headers=[
+CORS(app, origins="*", supports_credentials=True, expose_headers=[
     "Content-Range", "Accept-Ranges", "Content-Length",
     "Cache-Control", "Content-Type", "Content-Disposition"
 ])
@@ -56,6 +61,7 @@ def create_folders():
         "static/assets",
         "static/assets/temp",
         "static/assets/subtitles",
+        "static/assets/custom_audio",
         "static/generated_videos",
         "static/generated_videos/instagram",
     ]
@@ -152,7 +158,8 @@ def generate():
             voice_prefix = voice[:2]
 
 
-        videoClass = Shorts(data["videoSubject"], paragraph_number, ai_model, data["customPrompt"])
+        script_template = data.get("scriptTemplate", "")
+        videoClass = Shorts(data["videoSubject"], paragraph_number, ai_model, data["customPrompt"], script_template=script_template)
         # Generate a script
         videoClass.GenerateScript()
         # Generate search terms
@@ -262,8 +269,9 @@ def generate_script_only():
     video_subject = data["videoSubject"]
     extra_prompt = data["extraPrompt"]
     ai_model = data["aiModel"]
+    script_template = data.get("scriptTemplate", "")
 
-    videoClass = Shorts(video_subject, 1, ai_model, "",extra_prompt=extra_prompt)
+    videoClass = Shorts(video_subject, 1, ai_model, "", extra_prompt=extra_prompt, script_template=script_template)
     script = videoClass.GenerateScript()
 
 
@@ -314,12 +322,18 @@ def search_and_download():
     subtitle_template = data.get("subtitleTemplate", "classic")
     aspect_ratio = data.get("aspectRatio", "9:16")
     custom_subtitle = data.get("customSubtitle", "")
+    custom_audio_path = data.get("customAudioPath", "")
+    audio_start_time = data.get("audioStartTime", 0)
+    audio_end_time = data.get("audioEndTime", 0)
+    images = data.get("images", [])
+    image_duration = data.get("imageDuration", 5.0)
+    image_durations = data.get("imageDurations", [])
 
     if not voice:
         print(colored("[!] No voice was selected. Defaulting to \"en_us_001\"", "yellow"))
         voice = "en_us_001"
     # Search for a video of the given search term
-    videoClass = Shorts("", 1, ai_model, '')
+    videoClass = Shorts("", 1, ai_model, '', script_template=data.get("scriptTemplate", ""))
     videoClass.search_terms = search_terms
     videoClass.final_script = script
     videoClass.subtitles_position = subtitles_position
@@ -329,7 +343,24 @@ def search_and_download():
 
     videoClass.DownloadVideos(selectedVideoUrls)
 
-    videoClass.GenerateVoice(voice)
+    if images:
+        temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "assets", "temp"))
+        resolved_images = []
+        resolved_durations = []
+        for i, img in enumerate(images):
+            img_path = os.path.join(temp_dir, os.path.basename(img))
+            if os.path.exists(img_path):
+                resolved_images.append(img_path)
+            elif os.path.exists(img):
+                resolved_images.append(img)
+            dur = float(image_durations[i]) if i < len(image_durations) and image_durations[i] else float(image_duration)
+            resolved_durations.append(dur)
+        videoClass.image_paths = resolved_images
+        videoClass.image_durations = resolved_durations
+        videoClass.image_duration = float(image_duration) if image_duration else 5.0
+        print(colored(f"[+] Using {len(resolved_images)} image(s) with durations: {resolved_durations}", "green"))
+
+    videoClass.GenerateVoice(voice, custom_audio_path=custom_audio_path, audio_start_time=audio_start_time, audio_end_time=audio_end_time)
 
     videoClass.CombineVideos()
 
@@ -448,6 +479,35 @@ def addAudio():
     )
 
 
+@app.route("/api/upload-custom-audio", methods=["POST"])
+def upload_custom_audio():
+    audio_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "assets", "custom_audio"))
+    os.makedirs(audio_dir, exist_ok=True)
+
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "No file provided"}), 400
+
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"status": "error", "message": "No file selected"}), 400
+
+    allowed_ext = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".wma", ".mp4", ".mov", ".webm"}
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in allowed_ext:
+        return jsonify({"status": "error", "message": f"Unsupported format: {ext}"}), 400
+
+    file_id = f"{uuid4()}{ext}"
+    save_path = os.path.join(audio_dir, file_id)
+    file.save(save_path)
+
+    print(colored(f"[+] Uploaded custom audio: {file_id}", "green"))
+    return jsonify({
+        "status": "success",
+        "message": "Audio uploaded",
+        "data": {"filename": file_id, "path": os.path.join("static", "assets", "custom_audio", file_id)}
+    })
+
+
 @app.route("/api/upload-music", methods=["POST"])
 def upload_music():
     music_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "assets", "music"))
@@ -539,6 +599,144 @@ def download_music_url():
     except Exception as e:
         print(colored(f"[-] Error downloading audio: {str(e)}", "red"))
         return jsonify({"status": "error", "message": f"Download failed: {str(e)}"}), 500
+
+
+@app.route("/api/upload-video", methods=["POST"])
+def upload_video():
+    instagram_dir = os.path.join(os.path.dirname(__file__), "static/generated_videos/instagram")
+    os.makedirs(instagram_dir, exist_ok=True)
+
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "No file provided"}), 400
+
+    files = request.files.getlist("file")
+    if not files or files[0].filename == "":
+        return jsonify({"status": "error", "message": "No files selected"}), 400
+
+    uploaded = []
+    allowed_ext = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv"}
+    for file in files:
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext not in allowed_ext:
+            continue
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safe_name = secure_filename(file.filename)
+        final_name = f"{timestamp}_{safe_name}"
+        file.save(os.path.join(instagram_dir, final_name))
+        uploaded.append(final_name)
+
+    if not uploaded:
+        return jsonify({"status": "error", "message": "No valid video files uploaded"}), 400
+
+    print(colored(f"[+] Uploaded {len(uploaded)} video(s): {', '.join(uploaded)}", "green"))
+    return jsonify({
+        "status": "success",
+        "message": f"Uploaded {len(uploaded)} video(s)",
+        "data": {"filenames": uploaded}
+    })
+
+@app.route("/api/upload-image", methods=["POST"])
+def upload_image():
+    temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "assets", "temp"))
+    os.makedirs(temp_dir, exist_ok=True)
+
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "No file provided"}), 400
+
+    files = request.files.getlist("file")
+    if not files or files[0].filename == "":
+        return jsonify({"status": "error", "message": "No files selected"}), 400
+
+    uploaded = []
+    allowed_ext = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+    for file in files:
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext not in allowed_ext:
+            continue
+        safe_name = secure_filename(file.filename)
+        final_name = f"{uuid4()}_{safe_name}"
+        file.save(os.path.join(temp_dir, final_name))
+        uploaded.append(f"static/assets/temp/{final_name}")
+
+    if not uploaded:
+        return jsonify({"status": "error", "message": "No valid image files uploaded"}), 400
+
+    print(colored(f"[+] Uploaded {len(uploaded)} image(s): {', '.join(uploaded)}", "green"))
+    return jsonify({
+        "status": "success",
+        "message": f"Uploaded {len(uploaded)} image(s)",
+        "data": {"paths": uploaded}
+    })
+
+
+@app.route("/api/extract-frame", methods=["POST"])
+def extract_frame():
+    data = request.get_json()
+    video_filename = data.get("videoFilename", "")
+    video_url = data.get("videoUrl", "")
+    timestamp = float(data.get("timestamp", 0.0))
+
+    temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "assets", "temp"))
+    os.makedirs(temp_dir, exist_ok=True)
+
+    video_path = None
+    source_label = ""
+
+    if video_url:
+        source_label = "URL"
+        import uuid as uuid_mod
+        local_path = os.path.join(temp_dir, f"{uuid_mod.uuid4()}_source.mp4")
+        try:
+            r = requests.get(video_url, stream=True, timeout=30)
+            r.raise_for_status()
+            with open(local_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            video_path = local_path
+            print(colored(f"[+] Downloaded video from URL for frame extraction", "green"))
+        except Exception as e:
+            print(colored(f"[-] Failed to download video URL: {e}", "red"))
+            return jsonify({"status": "error", "message": f"Failed to download video: {e}"}), 400
+    elif video_filename:
+        source_label = video_filename
+        video_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "generated_videos"))
+        video_path = os.path.join(video_dir, video_filename)
+        if not os.path.exists(video_path):
+            return jsonify({"status": "error", "message": "Video not found"}), 404
+    else:
+        return jsonify({"status": "error", "message": "videoFilename or videoUrl is required"}), 400
+
+    output_path = os.path.join(temp_dir, f"thumb_{uuid4()}.jpg")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(timestamp),
+        "-i", video_path,
+        "-vframes", "1",
+        "-q:v", "2",
+        output_path,
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0 or not os.path.exists(output_path):
+            print(colored(f"[-] Frame extraction failed: {result.stderr[-200:]}", "red"))
+            return jsonify({"status": "error", "message": "Frame extraction failed"}), 500
+        print(colored(f"[+] Extracted frame at {timestamp}s from {source_label}", "green"))
+        return jsonify({
+            "status": "success",
+            "data": {"path": f"static/assets/temp/{os.path.basename(output_path)}"}
+        })
+    except Exception as e:
+        print(colored(f"[-] Frame extraction error: {e}", "red"))
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        if video_url and video_path and os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+            except Exception:
+                pass
 
 
 # Get all available songs
@@ -896,6 +1094,447 @@ def schedule_to_magicsync():
         return jsonify({"status": "error", "message": f"Cannot connect to MagicSync at {url}. Is the server running?"}), 502
     except Exception as e:
         print(colored(f"[-] Error scheduling video: {str(e)}", "red"))
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/leadgen/health", methods=["GET"])
+def leadgen_health():
+    port = request.args.get("port", 9222, type=int)
+    import asyncio
+    adapter = DevToolsAdapter(chrome_port=port)
+
+    async def check():
+        return await adapter.health_check()
+
+    try:
+        ok = asyncio.run(check())
+        return jsonify({"status": "ok" if ok else "error", "message": "Connected to Chrome" if ok else f"Cannot connect to Chrome on port {port}"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/leadgen/twitter-profile", methods=["GET"])
+def leadgen_twitter_profile():
+    username = request.args.get("username", "")
+    port = request.args.get("port", 9222, type=int)
+    if not username:
+        return jsonify({"status": "error", "message": "username required"}), 400
+    import asyncio
+    adapter = DevToolsAdapter(chrome_port=port)
+
+    async def fetch():
+        return await adapter.get_profile(username, "twitter")
+
+    try:
+        profile = asyncio.run(fetch())
+        if profile:
+            return jsonify({"status": "ok", "data": profile.__dict__})
+        return jsonify({"status": "error", "message": "Profile not found"}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/leadgen/scrape-url", methods=["POST"])
+def leadgen_scrape_url():
+    try:
+        data = request.get_json()
+        url = data.get("url", "")
+        if not url:
+            return jsonify({"status": "error", "message": "url is required"}), 400
+        from leadgen.scrape import scrape_url as do_scrape
+        result = do_scrape(url)
+        if "error" in result:
+            return jsonify({"status": "error", "message": result["error"]}), 400
+        return jsonify({"status": "ok", "data": result})
+    except Exception as e:
+        print(colored(f"[-] Error scraping URL: {e}", "red"))
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/leadgen/campaign/enrich", methods=["POST"])
+def leadgen_enrich_campaign():
+    try:
+        data = request.get_json()
+        description = data.get("description", "")
+        website_data = data.get("website_data")
+        if not description:
+            return jsonify({"status": "error", "message": "description is required"}), 400
+        if website_data and website_data.get("summary"):
+            result = enrich_campaign_with_website(description, website_data)
+        else:
+            result = enrich_campaign_description(description)
+        return jsonify({"status": "ok", "data": result})
+    except Exception as e:
+        print(colored(f"[-] Error enriching campaign: {e}", "red"))
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/leadgen/campaigns", methods=["GET", "POST"])
+def leadgen_campaigns():
+    if request.method == "GET":
+        return jsonify({"status": "ok", "data": get_campaigns()})
+
+    try:
+        data = request.get_json()
+        name = data.get("name", "")
+        description = data.get("description", "")
+        keywords = data.get("keywords", [])
+        platforms = data.get("platforms", [data.get("platform", "twitter")])
+        if isinstance(platforms, str):
+            platforms = [platforms]
+        enrichment = data.get("enrichment")
+        campaign = create_campaign(name, description, keywords, platforms, enrichment)
+        return jsonify({"status": "ok", "data": campaign})
+    except Exception as e:
+        print(colored(f"[-] Error creating campaign: {e}", "red"))
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/leadgen/campaigns/<campaign_id>", methods=["GET", "DELETE"])
+def leadgen_campaign_detail(campaign_id):
+    if request.method == "GET":
+        campaign = get_campaign(campaign_id)
+        if not campaign:
+            return jsonify({"status": "error", "message": "Campaign not found"}), 404
+        leads = get_leads(campaign_id)
+        campaign["leads"] = leads
+        return jsonify({"status": "ok", "data": campaign})
+
+    ok = delete_campaign(campaign_id)
+    if not ok:
+        return jsonify({"status": "error", "message": "Campaign not found"}), 404
+    return jsonify({"status": "ok", "message": "Campaign deleted"})
+
+
+@app.route("/api/leadgen/campaigns/<campaign_id>/leads", methods=["POST"])
+def leadgen_add_lead(campaign_id):
+    try:
+        campaign = get_campaign(campaign_id)
+        if not campaign:
+            return jsonify({"status": "error", "message": "Campaign not found"}), 404
+        data = request.get_json()
+        lead = add_lead(campaign_id, data)
+        return jsonify({"status": "ok", "data": lead})
+    except Exception as e:
+        print(colored(f"[-] Error adding lead: {e}", "red"))
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/leadgen/campaigns/<campaign_id>/competitors", methods=["GET", "POST"])
+def leadgen_campaign_competitors(campaign_id):
+    campaign = get_campaign(campaign_id)
+    if not campaign:
+        return jsonify({"status": "error", "message": "Campaign not found"}), 404
+
+    if request.method == "GET":
+        return jsonify({"status": "ok", "data": campaign.get("competitors", [])})
+
+    try:
+        data = request.get_json()
+        name = data.get("name", "")
+        url = data.get("url", "")
+        if not name:
+            return jsonify({"status": "error", "message": "Competitor name required"}), 400
+
+        # AI-enrich the competitor analysis
+        try:
+            analysis = analyze_competitor(name, campaign.get("description", ""))
+            competitor = {
+                "name": name,
+                "url": url,
+                "notes": data.get("notes", ""),
+                "analysis": analysis,
+            }
+        except Exception:
+            competitor = {
+                "name": name,
+                "url": url,
+                "notes": data.get("notes", ""),
+            }
+
+        result = add_competitor(campaign_id, competitor)
+        if result:
+            return jsonify({"status": "ok", "data": result})
+        return jsonify({"status": "error", "message": "Failed to add competitor"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/leadgen/campaigns/<campaign_id>/competitors/<competitor_id>", methods=["DELETE"])
+def leadgen_remove_competitor(campaign_id, competitor_id):
+    ok = remove_competitor(campaign_id, competitor_id)
+    if not ok:
+        return jsonify({"status": "error", "message": "Competitor not found"}), 404
+    return jsonify({"status": "ok", "message": "Competitor removed"})
+
+
+@app.route("/api/leadgen/campaigns/<campaign_id>/viral-posts", methods=["GET", "POST"])
+def leadgen_campaign_viral_posts(campaign_id):
+    campaign = get_campaign(campaign_id)
+    if not campaign:
+        return jsonify({"status": "error", "message": "Campaign not found"}), 404
+
+    if request.method == "GET":
+        return jsonify({"status": "ok", "data": campaign.get("viral_posts", [])})
+
+    try:
+        data = request.get_json()
+        post_text = data.get("post_text", "")
+        post_url = data.get("post_url", "")
+        username = data.get("username", "")
+
+        if not post_text:
+            return jsonify({"status": "error", "message": "post_text is required"}), 400
+
+        # AI-analyze the viral post
+        try:
+            analysis = analyze_viral_post(post_text, campaign.get("description", ""))
+            post = {
+                "post_text": post_text,
+                "post_url": post_url,
+                "username": username,
+                "analysis": analysis,
+            }
+        except Exception:
+            post = {
+                "post_text": post_text,
+                "post_url": post_url,
+                "username": username,
+            }
+
+        result = add_viral_post(campaign_id, post)
+        if result:
+            return jsonify({"status": "ok", "data": result})
+        return jsonify({"status": "error", "message": "Failed to save viral post"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/leadgen/twitter-audit", methods=["GET"])
+def leadgen_twitter_audit():
+    username = request.args.get("username", "")
+    port = request.args.get("port", 9222, type=int)
+    if not username:
+        return jsonify({"status": "error", "message": "username required"}), 400
+    import asyncio
+    adapter = DevToolsAdapter(chrome_port=port)
+
+    async def fetch():
+        profile = await adapter.get_profile(username, "twitter")
+        if not profile:
+            return None, []
+        profile_dict = profile.__dict__
+        queries = find_related_niche_queries(profile_dict)
+        all_related = []
+        seen = set()
+        for q in queries:
+            try:
+                results = await adapter.search_keyword(q, "twitter", max_results=5)
+                for r in results:
+                    if r.username and r.username.lower() != username.lower() and r.username not in seen:
+                        seen.add(r.username)
+                        all_related.append(r.__dict__)
+            except Exception:
+                continue
+        return profile_dict, all_related[:10]
+
+    try:
+        profile, related = asyncio.run(fetch())
+        if not profile:
+            return jsonify({"status": "error", "message": "Profile not found"}), 404
+        return jsonify({"status": "ok", "data": {"profile": profile, "related_users": related}})
+    except Exception as e:
+        print(colored(f"[-] Error auditing profile: {e}", "red"))
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/leadgen/campaigns/<campaign_id>/search-leads", methods=["POST"])
+def leadgen_campaign_search_leads(campaign_id):
+    campaign = get_campaign(campaign_id)
+    if not campaign:
+        return jsonify({"status": "error", "message": "Campaign not found"}), 404
+
+    data = request.get_json() or {}
+    port = int(data.get("port", 9222))
+    max_results = int(data.get("max_results", 10))
+    mode = data.get("mode", "leads")
+    custom_keywords = data.get("custom_keywords", [])
+
+    # GPT-generate the best keywords for this campaign + mode
+    try:
+        if mode == "engagement":
+            search_queries = generate_engagement_keywords(campaign)
+        else:
+            search_queries = generate_lead_keywords(campaign)
+    except Exception:
+        search_queries = campaign.get("keywords", []) + campaign.get("intent_queries", [])
+        search_queries = [q for q in set(search_queries) if q.strip()]
+
+    # Merge with user's custom keywords (at front, prioritized)
+    if custom_keywords:
+        search_queries = list(custom_keywords) + [q for q in search_queries if q not in custom_keywords]
+
+    if not search_queries:
+        return jsonify({"status": "error", "message": "Campaign has no keywords or queries to search for"}), 400
+
+    import asyncio
+    adapter = DevToolsAdapter(chrome_port=port)
+
+    async def fetch():
+        posts = []
+        profiles = {}
+        seen_posts = set()
+        seen_profiles = set()
+
+        for q in search_queries[:6]:
+            try:
+                results = await adapter.search_keyword(q, "twitter", max_results=max_results)
+                for r in results:
+                    if hasattr(r, 'post_url') and r.post_url and r.post_url not in seen_posts:
+                        seen_posts.add(r.post_url)
+                        posts.append(r.__dict__)
+                    if r.username and r.username not in seen_profiles:
+                        seen_profiles.add(r.username)
+                        if r.username not in profiles:
+                            profiles[r.username] = {
+                                "username": r.username,
+                                "display_name": r.display_name,
+                                "avatar_url": r.avatar_url,
+                                "bio": r.bio,
+                                "follower_count": r.follower_count,
+                                "profile_url": r.profile_url,
+                                "matched_keyword": q,
+                            }
+            except Exception:
+                continue
+
+        return posts[:30], list(profiles.values())[:15]
+
+    try:
+        real_posts, real_profiles = asyncio.run(fetch())
+
+        # If real search returned nothing, fall back to GPT-generated leads
+        gpt_fallback_used = False
+        if not real_posts and not real_profiles:
+            print(colored(f"[!] Real search returned 0 results — using GPT fallback", "yellow"))
+            gpt_fallback_used = True
+            synthetic = generate_synthetic_leads(campaign, mode=mode, count=12)
+            posts = []
+            profiles_list = []
+            for s in synthetic:
+                posts.append(s)
+                if s.get("lead_type") == "lead" and s.get("username"):
+                    profiles_list.append({
+                        "username": s["username"],
+                        "display_name": s.get("display_name", ""),
+                        "avatar_url": "",
+                        "bio": s.get("bio", ""),
+                        "follower_count": s.get("follower_count", 0),
+                        "profile_url": f"https://twitter.com/{s['username']}",
+                        "matched_keyword": "gpt-generated",
+                    })
+            # Mark posts as GPT-generated
+            for p in posts:
+                p["_gpt_generated"] = True
+        else:
+            posts = real_posts
+            profiles_list = real_profiles
+
+        # GPT qualify all posts 1-10
+        qualifications = []
+        if posts:
+            try:
+                qualifications = qualify_search_results(posts, campaign)
+            except Exception as e:
+                print(colored(f"[-] Qualification failed: {e}", "red"))
+
+        # Attach qualification to each post
+        for q in qualifications:
+            idx = q.get("index")
+            if idx is not None and idx < len(posts):
+                posts[idx]["qualification"] = {
+                    "score": q.get("score", 5),
+                    "classification": q.get("classification", "warm_lead"),
+                    "reason": q.get("reason", ""),
+                }
+
+        if mode == "engagement":
+            # Engagement mode: don't auto-add profiles as leads
+            engagement_suggestions = []
+            if posts:
+                try:
+                    post_texts = [p.get("post_text", "")[:200] for p in posts if p.get("post_text")]
+                    if post_texts:
+                        engagement_suggestions = suggest_engagement(post_texts, campaign.get("description", ""))
+                except Exception:
+                    pass
+
+            return jsonify({
+                "status": "ok",
+                "data": {
+                    "posts": posts,
+                    "profiles": profiles_list,
+                    "engagement_suggestions": engagement_suggestions,
+                    "queries_used": search_queries[:6],
+                    "mode": "engagement",
+                    "gpt_fallback_used": gpt_fallback_used,
+                    "qualifications": qualifications,
+                }
+            })
+        else:
+            # Leads mode: auto-add found or generated profiles as leads
+            for p in profiles_list:
+                add_lead(campaign_id, {
+                    "platform": "twitter",
+                    "username": p["username"],
+                    "display_name": p.get("display_name"),
+                    "avatar_url": p.get("avatar_url"),
+                    "bio": p.get("bio"),
+                    "follower_count": p.get("follower_count"),
+                    "profile_url": p.get("profile_url"),
+                    "matched_keyword": p.get("matched_keyword", "gpt-generated"),
+                    "source": "gpt_synthetic" if gpt_fallback_used else "campaign_search",
+                    "intent_score": p.get("intent_score", 0.7),
+                })
+
+            engagement_suggestions = []
+            if posts:
+                try:
+                    post_texts = [p.get("post_text", "")[:200] for p in posts if p.get("post_text")]
+                    if post_texts:
+                        engagement_suggestions = suggest_engagement(post_texts, campaign.get("description", ""))
+                except Exception:
+                    pass
+
+            return jsonify({
+                "status": "ok",
+                "data": {
+                    "posts": posts,
+                    "profiles": profiles_list,
+                    "engagement_suggestions": engagement_suggestions,
+                    "queries_used": search_queries[:6],
+                    "leads_added": len(profiles_list),
+                    "mode": "leads",
+                    "gpt_fallback_used": gpt_fallback_used,
+                    "qualifications": qualifications,
+                }
+            })
+    except Exception as e:
+        print(colored(f"[-] Error searching leads: {e}", "red"))
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/leadgen/enhance-profile", methods=["POST"])
+def leadgen_enhance_profile():
+    try:
+        data = request.get_json()
+        profile = data.get("profile", {})
+        if not profile:
+            return jsonify({"status": "error", "message": "profile data is required"}), 400
+        result = enhance_profile_analysis(profile)
+        return jsonify({"status": "ok", "data": result})
+    except Exception as e:
+        print(colored(f"[-] Error enhancing profile: {e}", "red"))
         return jsonify({"status": "error", "message": str(e)}), 500
 
 

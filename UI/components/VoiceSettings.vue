@@ -18,25 +18,33 @@ const selectedVoice = ref("M3");
 
 const { video } = useVideoSettings();
 
-const res = await $fetch<{ data: { voices: string[]; voiceStyles?: Record<string, { name: string; description: string; gender: string }> } }>(
-  `${API_SETTINGS.value.URL}/api/models`
-);
-const data = res.data;
-if (data.voiceStyles) {
-  voiceStyles.value = data.voiceStyles;
-  voiceOptions.value = data.voices.map((v) => ({
-    label: `${v} - ${data.voiceStyles?.[v]?.name || v} (${data.voiceStyles?.[v]?.gender || ""})`,
-    value: v,
-    description: data.voiceStyles?.[v]?.description,
-  }));
-} else {
-  voiceOptions.value = data.voices.map((v) => ({ label: v, value: v }));
-}
-// If user has a saved voice, use it; otherwise default to M3
-if (video.value.voice) {
-  selectedVoice.value = video.value.voice;
-}
-video.value.voice = selectedVoice.value;
+onMounted(async () => {
+  try {
+    const res = await $fetch<{ data: { voices: string[]; voiceStyles?: Record<string, { name: string; description: string; gender: string }> } }>(
+      `${API_SETTINGS.value.URL}/api/models`
+    );
+    const data = res.data;
+    if (data && data.voiceStyles) {
+      voiceStyles.value = data.voiceStyles;
+      voiceOptions.value = data.voices.map((v) => ({
+        label: `${v} - ${data.voiceStyles?.[v]?.name || v} (${data.voiceStyles?.[v]?.gender || ""})`,
+        value: v,
+        description: data.voiceStyles?.[v]?.description,
+      }));
+    } else if (data) {
+      voiceOptions.value = data.voices.map((v) => ({ label: v, value: v }));
+    }
+  } catch {
+    voiceOptions.value = [{ label: "Default", value: "M3" }];
+  }
+});
+
+watch(video, () => {
+  if (video.value?.voice) {
+    selectedVoice.value = video.value.voice;
+  }
+  video.value.voice = selectedVoice.value;
+}, { immediate: true, deep: true });
 </script>
 
 <template>

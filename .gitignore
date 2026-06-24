@@ -19,3 +19,7 @@ Songs/
 node_modules
 /UI/.nuxt
 Backend/static/generated_videos
+Backend/data
+
+.agent
+.claude

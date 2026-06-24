@@ -91,41 +91,90 @@ interface TTSSettings {
 
 import { useStorage } from "@vueuse/core";
 
+interface MagicSyncBusiness {
+  id: string
+  name: string
+  url: string
+  apiToken: string
+  videoBaseUrl: string
+}
+
 const isLoading = ref(false);
 const API_URL = "http://localhost:8080";
 
-// MagicSync config
-const magicsyncUrl = useStorage("MAGICSYNC_URL", "http://localhost:3000")
-const magicsyncApiToken = useStorage("MAGICSYNC_API_TOKEN", "")
-const videoBaseUrl = useStorage("VIDEO_BASE_URL", "http://localhost:8080")
-const magicsyncAccounts = ref<{ accountId: string; accountName: string; platform: string; isActive: boolean }[]>([])
-const magicsyncTesting = ref(false)
-const magicsyncError = ref("")
-const magicsyncConnected = ref(false)
+// MagicSync multi-business config
+const magicsyncBusinesses = useStorage<MagicSyncBusiness[]>("MAGICSYNC_BUSINESSES", [])
 
-async function testMagicsyncConnection() {
-  magicsyncTesting.value = true
-  magicsyncError.value = ""
-  magicsyncAccounts.value = []
-  magicsyncConnected.value = false
+// Migrate old single-entry config
+const oldUrl = useStorage("MAGICSYNC_URL", "")
+const oldApiToken = useStorage("MAGICSYNC_API_TOKEN", "")
+const oldVideoBaseUrl = useStorage("VIDEO_BASE_URL", "http://localhost:8080")
+if (oldUrl.value && oldApiToken.value) {
+  const exists = magicsyncBusinesses.value.some(b => b.apiToken === oldApiToken.value)
+  if (!exists) {
+    magicsyncBusinesses.value.push({
+      id: crypto.randomUUID(),
+      name: "Default Business",
+      url: oldUrl.value,
+      apiToken: oldApiToken.value,
+      videoBaseUrl: oldVideoBaseUrl.value,
+    })
+  }
+  oldUrl.value = ""
+  oldApiToken.value = ""
+}
+
+const showBusinessModal = ref(false)
+const editingBusiness = ref<MagicSyncBusiness | null>(null)
+const businessForm = ref<MagicSyncBusiness>({ id: "", name: "", url: "http://localhost:3000", apiToken: "", videoBaseUrl: "http://localhost:8080" })
+const testingBizId = ref<string | null>(null)
+const testResults = ref<Record<string, { connected: boolean; accounts: any[]; error: string }>>({})
+
+function openAddBusiness() {
+  editingBusiness.value = null
+  businessForm.value = { id: crypto.randomUUID(), name: "", url: "http://localhost:3000", apiToken: "", videoBaseUrl: "http://localhost:8080" }
+  showBusinessModal.value = true
+}
+
+function openEditBusiness(biz: MagicSyncBusiness) {
+  editingBusiness.value = biz
+  businessForm.value = { ...biz }
+  showBusinessModal.value = true
+}
+
+function saveBusiness() {
+  if (!businessForm.value.name || !businessForm.value.apiToken) return
+  if (editingBusiness.value) {
+    const idx = magicsyncBusinesses.value.findIndex(b => b.id === editingBusiness.value!.id)
+    if (idx >= 0) magicsyncBusinesses.value[idx] = { ...businessForm.value }
+  } else {
+    magicsyncBusinesses.value.push({ ...businessForm.value })
+  }
+  showBusinessModal.value = false
+}
+
+function deleteBusiness(id: string) {
+  magicsyncBusinesses.value = magicsyncBusinesses.value.filter(b => b.id !== id)
+  delete testResults.value[id]
+}
+
+async function testBusinessConnection(biz: MagicSyncBusiness) {
+  testingBizId.value = biz.id
+  testResults.value[biz.id] = { connected: false, accounts: [], error: "" }
   try {
     const res = await $fetch<{ status: string; data: { accounts: any[] }; message?: string }>(
       `${API_URL}/api/magicsync/accounts`,
-      {
-        method: "POST",
-        body: { url: magicsyncUrl.value, apiToken: magicsyncApiToken.value }
-      }
+      { method: "POST", body: { url: biz.url, apiToken: biz.apiToken } }
     )
     if (res.status === "success") {
-      magicsyncAccounts.value = res.data.accounts
-      magicsyncConnected.value = true
+      testResults.value[biz.id] = { connected: true, accounts: res.data.accounts, error: "" }
     } else {
-      magicsyncError.value = res.message || "Connection failed"
+      testResults.value[biz.id] = { connected: false, accounts: [], error: res.message || "Connection failed" }
     }
   } catch (e: any) {
-    magicsyncError.value = e?.data?.message || e?.message || "Connection failed"
+    testResults.value[biz.id] = { connected: false, accounts: [], error: e?.data?.message || e?.message || "Connection failed" }
   } finally {
-    magicsyncTesting.value = false
+    testingBizId.value = null
   }
 }
 
@@ -496,54 +545,100 @@ const HandleSaveSettings = async () => {};
 
       <div class="bg-emerald-50 dark:bg-emerald-900/30 p-4 rounded-lg mb-4">
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
-          Connect to MagicSync to schedule video uploads to social media platforms.
+          Add API keys for each business you want to schedule videos to via MagicSync.
         </p>
-        <n-form-item label="MagicSync URL:">
-          <n-input v-model:value="magicsyncUrl" placeholder="http://localhost:3000" class="w-full" />
-        </n-form-item>
-        <n-form-item label="API Token:">
-          <n-input
-            v-model:value="magicsyncApiToken"
-            type="password"
-            show-password-on="click"
-            placeholder="Enter your MagicSync API token"
-            class="w-full"
-          />
-        </n-form-item>
-        <n-form-item label="Video Asset Base URL:">
-          <n-input v-model:value="videoBaseUrl" placeholder="http://localhost:8080" class="w-full" />
-          <template #feedback>
-            Base URL for video assets served by the Python backend
-          </template>
-        </n-form-item>
-        <div class="flex items-start gap-4 flex-wrap">
-          <n-button
-            type="primary"
-            :loading="magicsyncTesting"
-            :disabled="!magicsyncUrl || !magicsyncApiToken"
-            @click="testMagicsyncConnection"
-          >
-            <template #icon>
-              <Icon name="mdi:connection" />
-            </template>
-            Test Connection
-          </n-button>
 
-          <div v-if="magicsyncConnected" class="flex-1 min-w-0">
-            <div class="text-sm text-green-400 font-medium mb-2">✓ Connected — {{ magicsyncAccounts.length }} account(s)</div>
-            <div v-if="magicsyncAccounts.length > 0" class="space-y-1">
-              <div v-for="acc in magicsyncAccounts" :key="acc.accountId" class="text-xs text-gray-400 flex items-center gap-2">
-                <Icon name="mdi:check-circle" class="text-green-400" />
-                <span>{{ acc.platform }} — {{ acc.accountName }}</span>
-                <n-tag v-if="!acc.isActive" size="tiny" type="warning">inactive</n-tag>
-              </div>
+        <div v-if="magicsyncBusinesses.length === 0" class="text-sm text-yellow-500 mb-4">
+          No businesses configured yet. Add one to start scheduling videos.
+        </div>
+
+        <div v-for="biz in magicsyncBusinesses" :key="biz.id" class="bg-white dark:bg-slate-800 rounded-lg p-4 mb-3 border border-slate-200 dark:border-slate-700">
+          <div class="flex items-start justify-between mb-3">
+            <div class="flex-1 min-w-0">
+              <h4 class="font-semibold text-sm">{{ biz.name }}</h4>
+              <p class="text-xs text-gray-400 truncate">URL: {{ biz.url }}</p>
+              <p class="text-xs text-gray-400 truncate">Base URL: {{ biz.videoBaseUrl }}</p>
+              <p class="text-xs text-gray-400 truncate">Token: {{ biz.apiToken ? '••••••••' : 'Not set' }}</p>
+            </div>
+            <div class="flex items-center gap-1 shrink-0 ml-2">
+              <n-button size="tiny" quaternary @click="openEditBusiness(biz)">
+                <template #icon><Icon name="mdi:pencil" /></template>
+              </n-button>
+              <n-button size="tiny" quaternary @click="deleteBusiness(biz.id)">
+                <template #icon><Icon name="mdi:delete" /></template>
+              </n-button>
             </div>
           </div>
-          <div v-else-if="magicsyncError" class="text-sm text-red-400">
-            {{ magicsyncError }}
+
+          <div class="flex flex-wrap items-center gap-2">
+            <n-button
+              size="tiny"
+              :loading="testingBizId === biz.id"
+              @click="testBusinessConnection(biz)"
+            >
+              <template #icon><Icon name="mdi:connection" /></template>
+              Test Connection
+            </n-button>
+
+            <div v-if="testResults[biz.id]" class="text-xs">
+              <div v-if="testResults[biz.id].connected" class="text-green-500">
+                ✓ Connected — {{ testResults[biz.id].accounts.length }} account(s)
+                <div v-if="testResults[biz.id].accounts.length > 0" class="mt-1 space-y-0.5">
+                  <div v-for="acc in testResults[biz.id].accounts" :key="acc.platform + acc.accountName" class="flex items-center gap-1">
+                    <Icon name="mdi:check-circle" class="text-green-400 text-xs" />
+                    <span>{{ acc.platform }} — {{ acc.accountName }}</span>
+                    <n-tag v-if="!acc.isActive" size="tiny" type="warning">inactive</n-tag>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="text-red-400">{{ testResults[biz.id].error }}</div>
+            </div>
           </div>
         </div>
+
+        <n-button type="primary" ghost @click="openAddBusiness">
+          <template #icon><Icon name="mdi:plus" /></template>
+          Add Business
+        </n-button>
       </div>
+
+      <n-modal
+        v-model:show="showBusinessModal"
+        preset="card"
+        title="Business Configuration"
+        style="max-width: 520px"
+        :mask-closable="false"
+      >
+        <div class="space-y-4">
+          <n-form-item label="Business Name:">
+            <n-input v-model:value="businessForm.name" placeholder="My Business" class="w-full" />
+          </n-form-item>
+          <n-form-item label="MagicSync URL:">
+            <n-input v-model:value="businessForm.url" placeholder="http://localhost:3000" class="w-full" />
+          </n-form-item>
+          <n-form-item label="API Token:">
+            <n-input
+              v-model:value="businessForm.apiToken"
+              type="password"
+              show-password-on="click"
+              placeholder="Enter MagicSync API token"
+              class="w-full"
+            />
+          </n-form-item>
+          <n-form-item label="Video Asset Base URL:">
+            <n-input v-model:value="businessForm.videoBaseUrl" placeholder="http://localhost:8080" class="w-full" />
+            <template #feedback>
+              Base URL for video assets served by the Python backend (must be publicly accessible)
+            </template>
+          </n-form-item>
+          <div class="flex gap-3 pt-2 justify-end">
+            <n-button @click="showBusinessModal = false">Cancel</n-button>
+            <n-button type="primary" @click="saveBusiness" :disabled="!businessForm.name || !businessForm.apiToken">
+              Save
+            </n-button>
+          </div>
+        </div>
+      </n-modal>
 
       <n-form-item>
         <n-button @click="HandleSaveSettings" type="success" ghost :loading="isLoading" :disabled="isLoading">

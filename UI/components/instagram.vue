@@ -1,4 +1,6 @@
 <script setup>
+const { video } = useVideoSettings()
+const URL = useApiSettings().API_SETTINGS.value.URL;
 const instagramUrls = ref([''])
 const isDownloading = ref(false)
 const downloadStatus = ref([])
@@ -38,6 +40,18 @@ const downloadVideos = async () => {
         const data = await response.json()
 
         if (data.status === 'success') {
+          const filename = data.data?.filename || data.data?.title || ''
+          if (filename) {
+            if (!video.value.selectedVideoUrls) {
+              video.value.selectedVideoUrls = []
+            }
+            video.value.selectedVideoUrls.push({
+              url: `static/generated_videos/instagram/${filename}`,
+              image: `${URL}/static/generated_videos/instagram/${filename}`,
+              videoUrl: { fileType: 'mp4', link: `${URL}/static/generated_videos/instagram/${filename}`, quality: 'hd' },
+              type: 'local'
+            })
+          }
           downloadStatus.value.push({
             type: 'success',
             message: `Successfully downloaded video from: ${url}`,

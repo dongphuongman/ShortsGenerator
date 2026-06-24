@@ -26,7 +26,7 @@ class Shorts:
     7. Combine Videos with the Text-to-Speech [DONE]
     7. Combine Videos with the Text-to-Speech [DONE]
     """
-    def __init__(self,video_subject: str, paragraph_number: int, ai_model: str,customPrompt: str="", extra_prompt: str = ""):
+    def __init__(self,video_subject: str, paragraph_number: int, ai_model: str,customPrompt: str="", extra_prompt: str = "", script_template: str = ""):
         """
         Constructor for YouTube Class.
 
@@ -36,6 +36,7 @@ class Shorts:
             ai_model (str): The AI model to use for generation.
             customPrompt (str): The custom prompt to use for generation.
             extra_prompt (str): The extra prompt to use for generation.
+            script_template (str): The script template to use.
 
         Returns:
             None
@@ -52,6 +53,7 @@ class Shorts:
         self.ai_model = ai_model
         self.customPrompt = customPrompt
         self.extra_prompt = extra_prompt
+        self.script_template = script_template
         self.globalSettings = get_settings()
 
 
@@ -87,6 +89,9 @@ class Shorts:
         self.aspect_ratio = "9:16"
         self.custom_subtitle = ""
         self.final_music_video_path=""
+        self.image_paths = []
+        self.image_duration = 5.0
+        self.image_durations = []
 
     @property
     def get_final_video_path(self):
@@ -127,7 +132,12 @@ class Shorts:
         if self.customPrompt and self.customPrompt != "":
             prompt = self.customPrompt
         else:
-            prompt = self.globalSettings["scriptSettings"]["defaultPromptStart"]
+            templates = self.globalSettings.get("scriptTemplates", {}).get("options", [])
+            selected = next((t for t in templates if t["value"] == self.script_template), None)
+            if selected and selected.get("promptStart"):
+                prompt = selected["promptStart"]
+            else:
+                prompt = self.globalSettings["scriptSettings"]["defaultPromptStart"]
 
         prompt += f"""
         # Initialization:
@@ -137,7 +147,8 @@ class Shorts:
         
         """
         # Add the global prompt end
-        prompt += self.globalSettings["scriptSettings"]["defaultPromptEnd"]
+        prompt_end = self.globalSettings["scriptSettings"]["defaultPromptEnd"] or ""
+        prompt += prompt_end
 
         # Generate script
         response = generate_response(prompt, self.ai_model)
@@ -259,7 +270,7 @@ class Shorts:
         # Write the metadata in a json file with the video title as the filename
         self.WriteMetadataToFile(self.video_title, self.video_description, self.video_tags)
         
-    def GenerateVoice(self, voice):
+    def GenerateVoice(self, voice, custom_audio_path="", audio_start_time=0, audio_end_time=0):
         print(colored(f"[X] Generating voice: {voice} ", "green"))
         global GENERATING
         self.voice = voice
@@ -268,69 +279,101 @@ class Shorts:
         if self.custom_subtitle and self.custom_subtitle.strip():
             sentences = [s.strip() for s in self.custom_subtitle.split(". ") if s.strip()]
         else:
-            # Split script into sentences for subtitle generation
             sentences = self.final_script.split(". ")
             sentences = list(filter(lambda x: x != "", sentences))
 
         temp_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "assets", "temp"))
         paths = []
         self.tts_path = None
-        engine = get_tts_engine()
+        sentence_durations = None
 
-        if engine == "supertonic":
-            if not GENERATING:
-                return jsonify({"status": "error", "message": "Video generation was cancelled.", "data": []})
+        # Custom audio path — skip TTS, use uploaded audio
+        if custom_audio_path:
+            abs_custom_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', custom_audio_path))
+            if not os.path.exists(abs_custom_path):
+                abs_custom_path = custom_audio_path
+            custom_audio_path = abs_custom_path
+        if custom_audio_path and os.path.exists(custom_audio_path):
+            print(colored(f"[+] Using custom audio: {custom_audio_path}", "green"))
+            try:
+                audio_clip = AudioFileClip(custom_audio_path)
+                dur = float(audio_clip.duration)
+                audio_start = float(audio_start_time) if audio_start_time > 0 else 0
+                audio_end = float(audio_end_time) if audio_end_time > 0 else dur
+                if audio_end > dur:
+                    audio_end = dur
+                if audio_end > audio_start:
+                    audio_clip = audio_clip.subclip(audio_start, audio_end)
+                trimmed_path = os.path.join(temp_dir_path, f"{uuid4()}.mp3")
+                audio_clip.write_audiofile(trimmed_path)
+                audio_clip.close()
+                self.tts_path = trimmed_path
+                paths = [AudioFileClip(self.tts_path)]
+                print(colored(f"[+] Custom audio trimmed to {audio_start}-{audio_end}s", "green"))
+            except Exception as e:
+                print(colored(f"[-] Error processing custom audio: {e}", "red"))
+                self.tts_path = None
 
-            tts_settings = get_tts_settings()
-            fileId = uuid4()
-            supertonic_path = os.path.join(temp_dir_path, f"{fileId}.mp3")
-
-            result = tts_with_fallback(
-                self.final_script,
-                self.voice,
-                filename=supertonic_path,
-                lang=tts_settings.get("tts_lang", "en"),
-                quality=tts_settings.get("tts_quality", 8),
-                speed=tts_settings.get("tts_speed", 1.05),
-            )
-
-            if result["success"] and os.path.exists(supertonic_path):
-                audio_clip = AudioFileClip(supertonic_path)
-                paths = [audio_clip]
-                self.tts_path = supertonic_path
-                print(colored(f"[+] Supertonic generated full audio ({len(sentences)} sentences in one call)", "green"))
-            else:
-                print(colored("[-] Supertonic failed, using TikTok sentence-by-sentence fallback", "yellow"))
-
-        # Fallback: TikTok sentence-by-sentence
         if not paths:
-            tiktok_voice = "en_us_001"
-            print(colored(f"[*] Using TikTok TTS sentence-by-sentence (voice: {tiktok_voice})", "yellow"))
-            for sentence in sentences:
+            engine = get_tts_engine()
+
+            if engine == "supertonic":
                 if not GENERATING:
                     return jsonify({"status": "error", "message": "Video generation was cancelled.", "data": []})
-                fileId = uuid4()
-                current_tts_path = os.path.join(temp_dir_path, f"{fileId}.mp3")
-                tts_with_fallback(sentence, tiktok_voice, filename=current_tts_path)
-                if os.path.exists(current_tts_path):
-                    try:
-                        audio_clip = AudioFileClip(current_tts_path)
-                        paths.append(audio_clip)
-                    except Exception as e:
-                        print(colored(f"[-] Failed to load audio clip: {e}", "red"))
 
-            if paths:
-                print(colored(f"[X] Combining {len(paths)} sentence audio files", "green"))
-                final_audio = concatenate_audioclips(paths)
-                self.tts_path = os.path.join(temp_dir_path, f"{uuid4()}.mp3")
-                final_audio.write_audiofile(self.tts_path)
-            else:
-                print(colored("[-] No audio clips generated", "red"))
+                tts_settings = get_tts_settings()
+                fileId = uuid4()
+                supertonic_path = os.path.join(temp_dir_path, f"{fileId}.mp3")
+
+                result = tts_with_fallback(
+                    self.final_script,
+                    self.voice,
+                    filename=supertonic_path,
+                    lang=tts_settings.get("tts_lang", "en"),
+                    quality=tts_settings.get("tts_quality", 8),
+                    speed=tts_settings.get("tts_speed", 1.05),
+                )
+
+                if result["success"] and os.path.exists(supertonic_path):
+                    audio_clip = AudioFileClip(supertonic_path)
+                    paths = [audio_clip]
+                    self.tts_path = supertonic_path
+                    print(colored(f"[+] Supertonic generated full audio ({len(sentences)} sentences in one call)", "green"))
+                else:
+                    print(colored("[-] Supertonic failed, using TikTok sentence-by-sentence fallback", "yellow"))
+
+            # Fallback: TikTok sentence-by-sentence
+            if not paths:
+                tiktok_voice = "en_us_001"
+                sentence_durations = []
+                print(colored(f"[*] Using TikTok TTS sentence-by-sentence (voice: {tiktok_voice})", "yellow"))
+                for sentence in sentences:
+                    if not GENERATING:
+                        return jsonify({"status": "error", "message": "Video generation was cancelled.", "data": []})
+                    fileId = uuid4()
+                    current_tts_path = os.path.join(temp_dir_path, f"{fileId}.mp3")
+                    tts_with_fallback(sentence, tiktok_voice, filename=current_tts_path)
+                    if os.path.exists(current_tts_path):
+                        try:
+                            audio_clip = AudioFileClip(current_tts_path)
+                            sentence_durations.append(float(audio_clip.duration))
+                            paths.append(audio_clip)
+                        except Exception as e:
+                            print(colored(f"[-] Failed to load audio clip: {e}", "red"))
+                            sentence_durations.append(0.0)
+
+                if paths:
+                    print(colored(f"[X] Combining {len(paths)} sentence audio files", "green"))
+                    final_audio = concatenate_audioclips(paths)
+                    self.tts_path = os.path.join(temp_dir_path, f"{uuid4()}.mp3")
+                    final_audio.write_audiofile(self.tts_path)
+                else:
+                    print(colored("[-] No audio clips generated", "red"))
 
         # Generate subtitles
         if paths and self.tts_path and os.path.exists(self.tts_path):
             try:
-                self.subtitles_path = generate_subtitles(audio_path=self.tts_path, sentences=sentences, voice=self.voice_prefix)
+                self.subtitles_path = generate_subtitles(audio_path=self.tts_path, sentences=sentences, voice=self.voice_prefix, sentence_durations=sentence_durations)
             except Exception as e:
                 print(colored(f"[-] Error generating subtitles: {e}", "red"))
                 self.subtitles_path = None
@@ -349,6 +392,9 @@ class Shorts:
             10,
             n_threads or 2,
             aspect_ratio=aspect_ratio,
+            image_paths=self.image_paths if hasattr(self, 'image_paths') else None,
+            image_duration=self.image_duration if hasattr(self, 'image_duration') else 5.0,
+            image_durations=self.image_durations if hasattr(self, 'image_durations') else None,
         )
 
         print(colored(f"[-] Next step: {combined_video_path}", "green"))
@@ -383,7 +429,19 @@ class Shorts:
         with open(filepath, "w") as file:
             json.dump(metadata, file, indent=2) 
 
+    def _copy_metadata_to(self, source_video_path: str, dest_video_path: str):
+        dest_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "generated_videos"))
+        source_basename = os.path.splitext(os.path.basename(source_video_path))[0]
+        dest_basename = os.path.splitext(os.path.basename(dest_video_path))[0]
+        source_meta = os.path.join(dest_dir, f"{source_basename}.json")
+        dest_meta = os.path.join(dest_dir, f"{dest_basename}.json")
+        if os.path.exists(source_meta):
+            import shutil
+            shutil.copy2(source_meta, dest_meta)
+            print(colored(f"[+] Copied metadata to {dest_basename}.json", "green"))
+
     def AddMusic(self, use_music, custom_song_path="", music_source="library"):
+        original_video_path = self.final_video_path
         try:
             video_clip = VideoFileClip(f"{self.final_video_path}")
         except Exception as e:
@@ -406,6 +464,8 @@ class Shorts:
                 video_clip.close()
             except Exception:
                 pass
+            if original_video_path:
+                self._copy_metadata_to(original_video_path, os.path.join(dest_dir, self.final_music_video_path))
             return
 
         try:
@@ -434,6 +494,9 @@ class Shorts:
                 os.path.join(dest_dir, self.final_music_video_path),
                 threads=n_threads or 1,
             )
+
+            if original_video_path:
+                self._copy_metadata_to(original_video_path, os.path.join(dest_dir, self.final_music_video_path))
 
             try:
                 video_clip.close()

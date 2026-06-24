@@ -23,6 +23,16 @@ class InstagramDownloader:
             'extract_flat': False,
         }
 
+    def _get_timestamped_filename(self, original_path: str) -> str:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        dir_name = os.path.dirname(original_path)
+        base = os.path.splitext(os.path.basename(original_path))[0]
+        ext = os.path.splitext(original_path)[1]
+        new_name = f"{timestamp}_{base}{ext}"
+        new_path = os.path.join(dir_name, new_name)
+        os.rename(original_path, new_path)
+        return new_name
+
     def _create_output_directory(self) -> None:
         """Create the output directory if it doesn't exist"""
         os.makedirs(self.output_path, exist_ok=True)
@@ -42,12 +52,13 @@ class InstagramDownloader:
         """
         try:
             with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
-                # Extract video information
                 info = ydl.extract_info(url, download=True)
-                
+                original_path = ydl.prepare_filename(info)
+                final_name = self._get_timestamped_filename(original_path)
+
                 return {
                     'title': info.get('title', ''),
-                    'filename': ydl.prepare_filename(info),
+                    'filename': final_name,
                     'duration': info.get('duration'),
                     'thumbnail': info.get('thumbnail'),
                     'download_time': datetime.now().isoformat(),

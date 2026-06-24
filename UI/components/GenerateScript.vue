@@ -17,7 +17,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   activeTab: "ALL",
 });
-const { activeTab } = toRefs(props);
+const currentTab = ref(props.activeTab);
 </script>
 
 <template>
@@ -25,7 +25,7 @@ const { activeTab } = toRefs(props);
     <n-tabs
       type="line"
       animated
-      v-model:value="activeTab"
+      v-model:value="currentTab"
       display-directive="if"
     >
       <n-tab-pane name="ALL" tab="All">

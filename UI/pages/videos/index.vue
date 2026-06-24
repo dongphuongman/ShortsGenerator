@@ -19,6 +19,14 @@ interface MagicSyncAccount {
   isActive: boolean
 }
 
+interface MagicSyncBusiness {
+  id: string
+  name: string
+  url: string
+  apiToken: string
+  videoBaseUrl: string
+}
+
 const videos = ref<VideoItem[]>([])
 const loading = ref(true)
 const scheduleModal = ref(false)
@@ -28,14 +36,13 @@ const scheduleTime = ref<number | null>(null)
 const scheduling = ref(false)
 const scheduleResult = ref<string | null>(null)
 
-const videoBaseUrl = useStorage("VIDEO_BASE_URL", "http://localhost:8080")
 const scheduleContent = ref('')
 const scheduleTitle = ref('')
 const scheduleDescription = ref('')
 
 // MagicSync state
-const magicsyncUrl = useStorage("MAGICSYNC_URL", "http://localhost:3000")
-const magicsyncApiToken = useStorage("MAGICSYNC_API_TOKEN", "")
+const magicsyncBusinesses = useStorage<MagicSyncBusiness[]>("MAGICSYNC_BUSINESSES", [])
+const selectedBusinessId = ref<string | null>(null)
 const magicsyncAccounts = ref<MagicSyncAccount[]>([])
 const magicsyncLoading = ref(false)
 const selectedPlatforms = ref<string[]>([])
@@ -74,29 +81,43 @@ const openScheduleModal = async (video: VideoItem) => {
   scheduleTitle.value = video.metadata?.title || ''
   scheduleDescription.value = video.metadata?.description || ''
 
-  // Fetch connected accounts
-  if (magicsyncUrl.value && magicsyncApiToken.value) {
-    magicsyncLoading.value = true
-    try {
-      const res = await $fetch<{ status: string; data: { accounts: MagicSyncAccount[] }; message?: string }>(
-        `${API_BASE()}/api/magicsync/accounts`,
-        {
-          method: 'POST',
-          body: { url: magicsyncUrl.value, apiToken: magicsyncApiToken.value }
-        }
-      )
-      if (res.status === 'success') {
-        magicsyncAccounts.value = res.data.accounts.filter(a => a.isActive)
-        selectedPlatforms.value = [...new Set(magicsyncAccounts.value.map(a => a.platform))]
-      }
-    } catch (e) {
-      console.error('Failed to fetch MagicSync accounts', e)
-    } finally {
-      magicsyncLoading.value = false
-    }
+  // Auto-select first business if available
+  if (magicsyncBusinesses.value.length > 0) {
+    selectedBusinessId.value = magicsyncBusinesses.value[0].id
+    await fetchAccountsForBusiness(selectedBusinessId.value)
+  } else {
+    selectedBusinessId.value = null
   }
 
   scheduleModal.value = true
+}
+
+async function fetchAccountsForBusiness(businessId: string | null) {
+  if (!businessId) {
+    magicsyncAccounts.value = []
+    selectedPlatforms.value = []
+    return
+  }
+  const biz = magicsyncBusinesses.value.find(b => b.id === businessId)
+  if (!biz) return
+
+  magicsyncLoading.value = true
+  magicsyncAccounts.value = []
+  selectedPlatforms.value = []
+  try {
+    const res = await $fetch<{ status: string; data: { accounts: MagicSyncAccount[] }; message?: string }>(
+      `${API_BASE()}/api/magicsync/accounts`,
+      { method: 'POST', body: { url: biz.url, apiToken: biz.apiToken } }
+    )
+    if (res.status === 'success') {
+      magicsyncAccounts.value = res.data.accounts.filter(a => a.isActive)
+      selectedPlatforms.value = [...new Set(magicsyncAccounts.value.map(a => a.platform))]
+    }
+  } catch (e) {
+    console.error('Failed to fetch MagicSync accounts', e)
+  } finally {
+    magicsyncLoading.value = false
+  }
 }
 
 const togglePlatform = (platform: string) => {
@@ -111,6 +132,10 @@ const togglePlatform = (platform: string) => {
 const handleSchedule = async () => {
   if (!selectedVideo.value || !scheduleDate.value || !scheduleTime.value) return
   if (selectedPlatforms.value.length === 0) return
+  if (!selectedBusinessId.value) return
+
+  const biz = magicsyncBusinesses.value.find(b => b.id === selectedBusinessId.value)
+  if (!biz) return
 
   scheduling.value = true
   scheduleResult.value = null
@@ -130,9 +155,9 @@ const handleSchedule = async () => {
         title: scheduleTitle.value,
         description: scheduleDescription.value,
         platforms: selectedPlatforms.value,
-        url: magicsyncUrl.value,
-        apiToken: magicsyncApiToken.value,
-        videoBaseUrl: videoBaseUrl.value,
+        url: biz.url,
+        apiToken: biz.apiToken,
+        videoBaseUrl: biz.videoBaseUrl,
       }
     })
 
@@ -224,6 +249,16 @@ onMounted(fetchVideos)
           </p>
         </div>
 
+        <div v-if="magicsyncBusinesses.length > 0">
+          <label class="block text-sm text-gray-400 mb-1">Business</label>
+          <n-select
+            v-model:value="selectedBusinessId"
+            :options="magicsyncBusinesses.map(b => ({ label: b.name, value: b.id }))"
+            class="w-full"
+            @update:value="fetchAccountsForBusiness"
+          />
+        </div>
+
         <div>
           <label class="block text-sm text-gray-400 mb-1">Date</label>
           <n-date-picker v-model:value="scheduleDate" type="date" class="w-full" />
@@ -232,12 +267,6 @@ onMounted(fetchVideos)
         <div>
           <label class="block text-sm text-gray-400 mb-1">Time</label>
           <n-time-picker v-model:value="scheduleTime" class="w-full" />
-        </div>
-
-        <div>
-          <label class="block text-sm text-gray-400 mb-1">Video Base URL</label>
-          <n-input v-model:value="videoBaseUrl" placeholder="http://localhost:8080" class="w-full" />
-          <p class="text-xs text-gray-500 mt-0.5">Used to generate the video asset URL for MagicSync</p>
         </div>
 
         <div>
@@ -264,9 +293,12 @@ onMounted(fetchVideos)
             <n-spin size="small" />
             Fetching connected accounts...
           </div>
-          <div v-else-if="uniquePlatforms.length === 0" class="text-sm text-yellow-400">
-            No MagicSync accounts connected.
-            <NuxtLink to="/settings" class="underline">Configure in Settings</NuxtLink>
+          <div v-else-if="magicsyncBusinesses.length === 0" class="text-sm text-yellow-400">
+            No MagicSync businesses configured.
+            <NuxtLink to="/settings" class="underline">Add one in Settings</NuxtLink>
+          </div>
+          <div v-else-if="uniquePlatforms.length === 0 && !magicsyncLoading" class="text-sm text-yellow-400">
+            No connected accounts for this business.
           </div>
           <div v-else class="space-y-2">
             <div v-for="platform in uniquePlatforms" :key="platform" class="flex items-center gap-2">

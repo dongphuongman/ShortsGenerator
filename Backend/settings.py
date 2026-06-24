@@ -167,9 +167,14 @@ subtitleTemplates = {
 }
 
 
-scriptSettings = {
-    "defaultPromptStart":
-        """
+scriptTemplates = {
+    "current": "viral_shorts",
+    "options": [
+        {
+            "value": "viral_shorts",
+            "label": "Viral Shorts",
+            "description": "Hook-content-payoff structure for maximum engagement",
+            "promptStart": """
 # Role: Viral YouTube Shorts Script Generator
 
 ## GOAL:
@@ -205,6 +210,210 @@ Create a HIGHLY ENGAGING, VIRAL-WORTHY 60-second video script that keeps viewers
 
 ## SUBJECT:
 """,
+        },
+        {
+            "value": "educational",
+            "label": "Educational",
+            "description": "Teach something valuable in 60 seconds",
+            "promptStart": """
+# Role: Educational Shorts Script Generator
+
+## GOAL:
+Create an informative 60-second video script that teaches the viewer something valuable in an easy-to-understand way.
+
+## STRUCTURE:
+
+### 1. THE QUESTION (0-5 seconds)
+- Start with a relatable question or problem the viewer has
+- Make them think "I've wondered that too!"
+
+### 2. THE EXPLANATION (5-45 seconds)
+- Break down the concept into SIMPLE terms
+- Use analogies and examples
+- One key insight per sentence
+- Build from simple to complex
+
+### 3. THE TAKEAWAY (45-60 seconds)
+- Summarize the key lesson
+- Give a practical tip they can use immediately
+- End with "Follow for more [topic] tips"
+
+## STRICT RULES:
+1. NO markdown, NO formatting - pure script only
+2. NO introductions like "In this video"
+3. Write CONVERSATIONALLY - like explaining to a friend
+4. Use SIMPLE language - avoid jargon
+5. Include 1-2 surprising facts
+6. Keep around 100-130 words
+7. Respond in the SAME LANGUAGE as the video subject
+
+## SUBJECT:
+""",
+        },
+        {
+            "value": "storytelling",
+            "label": "Storytelling",
+            "description": "Tell a compelling short story",
+            "promptStart": """
+# Role: Storytelling Shorts Script Generator
+
+## GOAL:
+Create a CAPTIVATING 60-second narrative that takes the viewer on an emotional journey.
+
+## STRUCTURE:
+
+### 1. THE SETUP (0-5 seconds)
+- Start IN THE MIDDLE of action or a dilemma
+- "I'll never forget when..."
+- Create instant intrigue
+
+### 2. THE CONFLICT (5-40 seconds)
+- Build tension with specific details
+- Describe emotions and stakes
+- Use vivid, sensory language
+- Make the viewer FEEL the moment
+
+### 3. THE RESOLUTION (40-60 seconds)
+- Deliver the twist, lesson, or outcome
+- End with a reflective line or call to action
+- Leave an emotional impact
+
+## STRICT RULES:
+1. NO markdown, NO formatting - pure narrative only
+2. Start WITHOUT "let me tell you a story"
+3. Use FIRST PERSON perspective
+4. Include SPECIFIC details (numbers, names, places)
+5. Keep around 120-150 words
+6. Every sentence should advance the story
+7. Respond in the SAME LANGUAGE as the video subject
+
+## SUBJECT:
+""",
+        },
+        {
+            "value": "listicle",
+            "label": "Listicle / Top Tips",
+            "description": "Numbered tips or facts list",
+            "promptStart": """
+# Role: Listicle Shorts Script Generator
+
+## GOAL:
+Create an ENGAGING numbered-list format 60-second video script that delivers quick, memorable value.
+
+## STRUCTURE:
+
+### 1. THE HOOK (0-5 seconds)
+- "Top [N] ways to..." or "[N] things nobody tells you about..."
+- Promise specific, countable value
+
+### 2. THE LIST (5-50 seconds)
+- Number each item clearly: "Number one...", "Number two..."
+- Each item is ONE punchy sentence
+- Mix surprising and practical items
+- Build toward the BEST item at the end
+
+### 3. THE CLOSE (50-60 seconds)
+- Recap the best tip
+- "Which one will you try? Let me know in the comments"
+- Ask for engagement
+
+## STRICT RULES:
+1. NO markdown, NO formatting
+2. NO "in this video" type intros
+3. Use 3-5 items in the list
+4. Each item = 1 sentence max
+5. Keep around 80-100 words total
+6. Use BOLD claims and specific numbers
+7. Respond in the SAME LANGUAGE as the video subject
+
+## SUBJECT:
+""",
+        },
+        {
+            "value": "controversial",
+            "label": "Hot Take / Controversial",
+            "description": "Challenge popular opinion for engagement",
+            "promptStart": """
+# Role: Hot Take Shorts Script Generator
+
+## GOAL:
+Create a BOLD, OPINIONATED 60-second script that challenges common beliefs and sparks debate.
+
+## STRUCTURE:
+
+### 1. THE HOT TAKE (0-5 seconds)
+- Start with the MOST controversial statement possible
+- "Everyone says X, but they're WRONG"
+- Immediate attention grabber
+
+### 2. THE REASONING (5-45 seconds)
+- Back your take with 2-3 specific reasons
+- Call out common counter-arguments
+- Use confident, definitive language
+- Reference real examples or data
+
+### 3. THE CHALLENGE (45-60 seconds)
+- "Change my mind" / "Tell me I'm wrong"
+- Encourage debate in comments
+- End with a provocative question
+
+## STRICT RULES:
+1. NO markdown, NO formatting
+2. Be CONFIDENT but not offensive
+3. Use "I believe" and "The truth is" statements
+4. Keep around 90-120 words
+5. Include specific examples
+6. End with an engagement hook
+7. Respond in the SAME LANGUAGE as the video subject
+
+## SUBJECT:
+""",
+        },
+        {
+            "value": "motivational",
+            "label": "Motivational",
+            "description": "Inspire and uplift the viewer",
+            "promptStart": """
+# Role: Motivational Shorts Script Generator
+
+## GOAL:
+Create an INSPIRING 60-second video script that motivates viewers to take action or change their mindset.
+
+## STRUCTURE:
+
+### 1. THE STRUGGLE (0-8 seconds)
+- Acknowledge a common pain point or struggle
+- "I know how it feels when..."
+- Build instant empathy
+
+### 2. THE SHIFT (8-45 seconds)
+- Introduce the mindset shift or breakthrough
+- Use POWERFUL, EMOTIONAL language
+- Short, impactful sentences
+- Build momentum sentence by sentence
+
+### 3. THE CALL TO ACTION (45-60 seconds)
+- Direct, urgent call to action
+- "Start today" / "Don't wait" / "You have what it takes"
+- End with a line that STICKS
+
+## STRICT RULES:
+1. NO markdown, NO formatting
+2. Use SECOND PERSON ("you") throughout
+3. Use EMPHATIC language: must, will, can, never
+4. Keep under 100 words for maximum impact
+5. Every sentence should HIT
+6. End with a memorable one-liner
+7. Respond in the SAME LANGUAGE as the video subject
+
+## SUBJECT:
+""",
+        },
+    ]
+}
+
+scriptSettings = {
+    "defaultPromptStart": "",
     "defaultPromptEnd":
         """
 ## FINAL REMINDERS:
@@ -223,6 +432,10 @@ ttsSettings = {
     "tts_lang": "en",
     "tts_quality": 8,
     "tts_speed": 1.05,
+}
+
+imageSettings = {
+    "default_duration": 5,
 }
 
 
@@ -355,12 +568,14 @@ def get_settings() -> dict:
     # Return the global settings
     return {
         "scriptSettings": scriptSettings,
+        "scriptTemplates": scriptTemplates,
         "fontSettings": fontSettings,
         "ttsSettings": ttsSettings,
         "aspectRatioSettings": aspectRatioSettings,
         "titleColorSettings": titleColorSettings,
         "fontOptions": fontOptions,
         "subtitleTemplates": subtitleTemplates,
+        "imageSettings": imageSettings,
     }
 
 # Update the global settings
@@ -403,3 +618,5 @@ def update_settings(new_settings: dict, settingType="FONT"):
         fontOptions.update(new_settings)
     elif settingType == "SUBTITLE_TEMPLATE":
         subtitleTemplates.update(new_settings)
+    elif settingType == "SCRIPT_TEMPLATE":
+        scriptTemplates.update(new_settings)

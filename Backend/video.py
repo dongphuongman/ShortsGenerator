@@ -134,7 +134,7 @@ def __generate_subtitles_locally(audio_path: str, sentences: List[str], voice: s
 
 
 def generate_subtitles(audio_path: str, sentences: List[str], voice: str, sentence_durations: Optional[List[float]] = None) -> str:
-    def equalize_subtitles(srt_path: str, max_chars: int = 10) -> None:
+    def equalize_subtitles(srt_path: str, max_chars: int = 42) -> None:
         srt_equalizer.equalize_srt_file(srt_path, srt_path, max_chars)
 
     subtitles_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "assets", "subtitles"))
@@ -494,6 +494,106 @@ def _resolve_subtitle_template(template_value: str):
     return None
 
 
+def _get_font_family(font_path: str) -> str:
+    try:
+        result = subprocess.run(
+            ["fc-scan", "--format", "%{family}", font_path],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip().split(",")[0]
+    except Exception:
+        pass
+    return os.path.splitext(os.path.basename(font_path))[0]
+
+
+def _ffmpeg_render_with_subtitles(
+    video_path: str,
+    audio_path: str,
+    subtitles_path: str,
+    output_path: str,
+    font_path: str,
+    fontsize: int,
+    color: str,
+    stroke_color: str,
+    stroke_width: int,
+    position: str,
+    target_w: int,
+    target_h: int,
+) -> bool:
+    def hex_to_ass(hex_color: str) -> str:
+        h = hex_color.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        return f"&H00{h[4:6]}{h[2:4]}{h[0:2]}"
+
+    primary = hex_to_ass(color)
+    outline = hex_to_ass(stroke_color)
+
+    pos_map = {
+        "center,bottom": 2,
+        "center,center": 5,
+        "center,top": 8,
+    }
+    alignment = pos_map.get(position, 2)
+
+    font_family = _get_font_family(font_path)
+    font_dir = os.path.dirname(os.path.abspath(font_path))
+
+    # ASS PlayRes defaults to 384x288 for SRT. FontSize is in units at PlayResY=288.
+    # To render a font at "fontsize" pixels tall at target_h video height:
+    #   ass_fontsize = fontsize * 288 / target_h
+    ass_playres_y = 288
+    fontsize_ass = max(12, round(fontsize * ass_playres_y / target_h))
+    stroke_width_ass = max(0, round(stroke_width * ass_playres_y / target_h))
+
+    ass_style = (
+        f"FontName={font_family},"
+        f"FontSize={fontsize_ass},"
+        f"PrimaryColour={primary},"
+        f"OutlineColour={outline},"
+        f"Outline={stroke_width_ass},"
+        f"BorderStyle=1,"
+        f"Alignment={alignment}"
+    )
+
+    # ffmpeg filter syntax uses , to separate filters and : to separate options.
+    # Escape both inside force_style so libass receives them intact.
+    escaped_style = ass_style.replace(",", "\\,").replace(":", "\\:")
+    safe_subs = subtitles_path.replace(":", "\\:")
+    safe_fontdir = font_dir.replace(":", "\\:")
+
+    cmd = [
+        "ffmpeg", "-y", "-hwaccel", "auto",
+        "-i", video_path,
+        "-i", audio_path,
+        "-vf", f"subtitles={safe_subs}:fontsdir={safe_fontdir}:original_size={target_w}x{target_h}:force_style={escaped_style}",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-shortest",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            print(colored(f"[-] ffmpeg subtitle render failed: {result.stderr[-500:]}", "yellow"))
+            return False
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            print(colored("[+] Video rendered with subtitles (fast ffmpeg path).", "green"))
+            return True
+        return False
+    except Exception as e:
+        print(colored(f"[-] ffmpeg subtitle render exception: {e}", "yellow"))
+        return False
+
+
 def generate_video(
     combined_video_path: str,
     tts_path: str,
@@ -545,6 +645,30 @@ def generate_video(
         except Exception:
             pass
 
+    generated_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "generated_videos"))
+
+    # --- TRY FFMPEG FAST PATH FIRST ---
+    fast_video_name = os.path.join(generated_dir, f"{uuid4()}-final.mp4")
+    print(colored("[+] Trying ffmpeg subtitle render (fast path)...", "blue"))
+    if _ffmpeg_render_with_subtitles(
+        combined_video_path,
+        tts_path,
+        subtitles_path,
+        fast_video_name,
+        font_path,
+        fontsize,
+        color,
+        stroke_color,
+        stroke_width,
+        f"{horizontal_subtitles_position},{vertical_subtitles_position}",
+        target_w,
+        target_h,
+    ):
+        return fast_video_name
+
+    print(colored("[*] Falling back to MoviePy subtitle render.", "yellow"))
+
+    # --- MOVIEPY FALLBACK ---
     def generator(txt):
         return TextClip(
             txt,
@@ -590,7 +714,6 @@ def generate_video(
 
     result = result.set_audio(audio)
 
-    generated_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "generated_videos"))
     video_name = os.path.join(generated_dir, f"{uuid4()}-final.mp4")
     print(colored("[+] Writing video...", "green"))
     result.write_videofile(video_name, threads=max(1, threads), codec="libx264", preset="ultrafast", audio_codec="aac")
@@ -613,3 +736,38 @@ def generate_video(
         pass
 
     return video_name
+
+
+def ffmpeg_add_music_to_video(
+    video_path: str,
+    music_path: str,
+    output_path: str,
+    volume: float = 0.1,
+) -> bool:
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-i", music_path,
+        "-filter_complex",
+        f"[0:a][1:a]amix=inputs=2:duration=first:volume={volume}[audio]",
+        "-c:v", "copy",
+        "-map", "0:v:0",
+        "-map", "[audio]",
+        "-c:a", "aac",
+        "-shortest",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            print(colored(f"[-] ffmpeg add music failed: {result.stderr[-500:]}", "yellow"))
+            return False
+        if os.path.exists(output_path):
+            print(colored("[+] Music added (fast ffmpeg path, video stream copied).", "green"))
+            return True
+        return False
+    except Exception as e:
+        print(colored(f"[-] ffmpeg add music exception: {e}", "yellow"))
+        return False

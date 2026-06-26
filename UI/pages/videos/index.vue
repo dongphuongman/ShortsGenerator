@@ -5,6 +5,8 @@ interface VideoMetadata {
   title: string
   description: string
   tags: string[]
+  post_content?: string
+  suggested_schedule?: string
 }
 
 interface VideoItem {
@@ -77,9 +79,14 @@ const openScheduleModal = async (video: VideoItem) => {
   scheduleResult.value = null
   selectedPlatforms.value = []
   magicsyncAccounts.value = []
-  scheduleContent.value = video.metadata?.title || video.metadata?.description || video.filename
+  scheduleContent.value = video.metadata?.post_content || video.metadata?.title || video.metadata?.description || video.filename
   scheduleTitle.value = video.metadata?.title || ''
   scheduleDescription.value = video.metadata?.description || ''
+  if (video.metadata?.suggested_schedule) {
+    const d = new Date(video.metadata.suggested_schedule)
+    scheduleDate.value = d.getTime()
+    scheduleTime.value = d.getTime()
+  }
 
   // Auto-select first business if available
   if (magicsyncBusinesses.value.length > 0) {
@@ -170,6 +177,44 @@ const handleSchedule = async () => {
   }
 }
 
+const deleteModal = ref(false)
+const deleteTarget = ref<VideoItem | null>(null)
+const deleting = ref(false)
+
+const confirmDelete = async () => {
+  if (!deleteTarget.value) return
+  deleting.value = true
+  try {
+    await $fetch(`${API_BASE()}/api/video/delete`, {
+      method: 'POST',
+      body: { filename: deleteTarget.value.filename }
+    })
+    videos.value = videos.value.filter(v => v.filename !== deleteTarget.value!.filename)
+    deleteModal.value = false
+    deleteTarget.value = null
+  } catch (e: any) {
+    console.error('Delete failed', e)
+  } finally {
+    deleting.value = false
+  }
+}
+
+const openDeleteConfirm = (video: VideoItem) => {
+  deleteTarget.value = video
+  deleteModal.value = true
+}
+
+const applySuggestedSchedule = (video: VideoItem) => {
+  if (!video.metadata?.suggested_schedule) return
+  const date = new Date(video.metadata.suggested_schedule)
+  scheduleDate.value = date.getTime()
+  scheduleTime.value = date.getTime()
+  if (video.metadata.post_content) {
+    scheduleContent.value = video.metadata.post_content
+  }
+  openScheduleModal(video)
+}
+
 const uniquePlatforms = computed(() => {
   const seen = new Set<string>()
   for (const acc of magicsyncAccounts.value) {
@@ -221,18 +266,47 @@ onMounted(fetchVideos)
               {{ tag }}
             </span>
           </div>
+          <p v-if="video.metadata?.post_content" class="text-xs text-gray-500 line-clamp-2 italic">
+            {{ video.metadata.post_content }}
+          </p>
+          <div v-if="video.metadata?.suggested_schedule" class="mt-1">
+            <span
+              class="text-xs text-blue-400 cursor-pointer hover:text-blue-300 underline decoration-dotted"
+              @click="applySuggestedSchedule(video)"
+            >
+              <Icon name="mdi:calendar-clock" class="inline align-text-bottom" />
+              Schedule: {{ new Date(video.metadata.suggested_schedule).toLocaleString() }}
+            </span>
+          </div>
         </div>
 
-        <div class="px-4 pb-4 mt-auto">
-          <n-button type="primary" size="small" block @click="openScheduleModal(video)">
+        <div class="px-4 pb-2 mt-auto flex gap-2">
+          <n-button type="primary" size="small" class="flex-1" @click="openScheduleModal(video)">
             <template #icon>
               <Icon name="mdi:calendar-clock" />
             </template>
-            Schedule Upload
+            Schedule
+          </n-button>
+          <n-button type="error" size="small" class="flex-shrink-0" @click="openDeleteConfirm(video)">
+            <template #icon>
+              <Icon name="mdi:delete" />
+            </template>
           </n-button>
         </div>
       </div>
     </div>
+
+    <n-modal
+      v-model:show="deleteModal"
+      preset="dialog"
+      title="Delete Video"
+      :content="`Are you sure you want to delete '${deleteTarget?.metadata?.title || deleteTarget?.filename}'?`"
+      positive-text="Delete"
+      negative-text="Cancel"
+      :positive-button-props="{ type: 'error', loading: deleting }"
+      @positive-click="confirmDelete"
+      @negative-click="deleteModal = false"
+    />
 
     <n-modal
       v-model:show="scheduleModal"

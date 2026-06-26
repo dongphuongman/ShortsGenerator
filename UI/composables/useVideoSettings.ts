@@ -24,6 +24,14 @@ export interface UploadedImage {
   duration: number;
 }
 
+export interface VideoMetadata {
+  title: string;
+  description: string;
+  tags: string[];
+  post_content?: string;
+  suggested_schedule?: string;
+}
+
 export const useVideoSettings = () => {
   const defaults = {
     script: "",
@@ -49,6 +57,7 @@ export const useVideoSettings = () => {
     audioEndTime: 0,
     images: [] as UploadedImage[],
     imageDuration: 5,
+    lastMetadata: null as VideoMetadata | null,
   }
 
   const video = useStorage<typeof defaults>('VideoSettings', { ...defaults })

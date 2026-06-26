@@ -139,9 +139,9 @@ def get_search_terms(video_subject: str, amount: int, script: str, ai_model: str
     return search_terms
 
 
-def generate_metadata(video_subject: str, script: str, ai_model: str) -> Tuple[str, str, List[str]]:  
+def generate_metadata(video_subject: str, script: str, ai_model: str) -> Tuple[str, str, List[str], str]:  
     """  
-    Generate metadata for a YouTube video, including the title, description, and keywords.  
+    Generate metadata for a YouTube video, including the title, description, keywords, and social post content.  
 
     Args:  
         video_subject (str): The subject of the video.  
@@ -149,7 +149,7 @@ def generate_metadata(video_subject: str, script: str, ai_model: str) -> Tuple[s
         ai_model (str): The AI model to use for generation.  
 
     Returns:  
-        Tuple[str, str, List[str]]: The title, description, and keywords for the video.  
+        Tuple[str, str, List[str], str]: The title, description, keywords, and post content for the video.  
     """  
 
     # Build prompt for title  
@@ -185,4 +185,18 @@ def generate_metadata(video_subject: str, script: str, ai_model: str) -> Tuple[s
     # Generate keywords  
     keywords = get_search_terms(video_subject, 6, script, ai_model)  
 
-    return title, description, keywords
+    # Generate social media post content  
+    post_prompt = f"""  
+    You are an expert social media content writer. Write a short, engaging post to promote this video on social platforms like YouTube, TikTok, or Instagram.  
+    The post should grab attention, use line breaks, and end with a call to action. Keep it under 280 characters.  
+    Return ONLY the post text — no quotes, no formatting.  
+
+    Video Title: {title}  
+    Video Subject: {video_subject}  
+
+    Script:  
+    {script}  
+    """  
+    post_content = generate_response(post_prompt, ai_model).strip().strip('"').strip("'")  
+
+    return title, description, keywords, post_content

@@ -265,10 +265,20 @@ class Shorts:
 
 
     def GenerateMetadata(self):
-        self.video_title, self.video_description, self.video_tags = generate_metadata(self.video_subject, self.final_script, self.ai_model)
+        self.video_title, self.video_description, self.video_tags, self.video_post_content = generate_metadata(self.video_subject, self.final_script, self.ai_model)
+
+        # Compute a suggested schedule (next weekday at 12:00 UTC)
+        from datetime import datetime, timedelta
+        now = datetime.utcnow()
+        next_day = now + timedelta(days=1)
+        if next_day.weekday() == 5:
+            next_day += timedelta(days=2)
+        elif next_day.weekday() == 6:
+            next_day += timedelta(days=1)
+        self.suggested_schedule = next_day.replace(hour=12, minute=0, second=0, microsecond=0).isoformat()
 
         # Write the metadata in a json file with the video title as the filename
-        self.WriteMetadataToFile(self.video_title, self.video_description, self.video_tags)
+        self.WriteMetadataToFile(self.video_title, self.video_description, self.video_tags, self.video_post_content, self.suggested_schedule)
         
     def GenerateVoice(self, voice, custom_audio_path="", audio_start_time=0, audio_end_time=0):
         print(colored(f"[X] Generating voice: {voice} ", "green"))
@@ -413,11 +423,13 @@ class Shorts:
             print(colored(f"[-] Error generating final video: {e}", "red"))
             self.final_video_path = None
 
-    def WriteMetadataToFile(self, video_title, video_description, video_tags):
+    def WriteMetadataToFile(self, video_title, video_description, video_tags, video_post_content="", suggested_schedule=""):
         metadata = {
             "title": video_title,
             "description": video_description,
-            "tags": video_tags
+            "tags": video_tags,
+            "post_content": video_post_content,
+            "suggested_schedule": suggested_schedule
         }
         if self.final_video_path:
             basename = os.path.splitext(os.path.basename(self.final_video_path))[0]
@@ -442,38 +454,21 @@ class Shorts:
 
     def AddMusic(self, use_music, custom_song_path="", music_source="library"):
         original_video_path = self.final_video_path
-        try:
-            video_clip = VideoFileClip(f"{self.final_video_path}")
-        except Exception as e:
-            print(colored(f"[-] Could not open final video for music: {e}", "red"))
-            return
-
-        self.final_music_video_path = f"{uuid4()}-music.mp4"
-        n_threads = 2
         dest_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "generated_videos"))
+        output_filename = f"{uuid4()}-music.mp4"
+        output_path = os.path.join(dest_dir, output_filename)
 
         if not use_music:
-            try:
-                video_clip.write_videofile(
-                    os.path.join(dest_dir, self.final_music_video_path),
-                    threads=n_threads or 1,
-                )
-            except Exception as e:
-                print(colored(f"[-] Could not write final video: {e}", "red"))
-            try:
-                video_clip.close()
-            except Exception:
-                pass
+            import shutil
+            shutil.copy2(original_video_path, output_path)
+            self.final_music_video_path = output_filename
             if original_video_path:
-                self._copy_metadata_to(original_video_path, os.path.join(dest_dir, self.final_music_video_path))
+                self._copy_metadata_to(original_video_path, output_path)
             return
 
         try:
-            original_duration = video_clip.duration
-            original_audio = video_clip.audio
-
             if music_source == "video" and custom_song_path and os.path.exists(custom_song_path):
-                song_clip = AudioFileClip(custom_song_path).set_fps(44100)
+                song_path = custom_song_path
             else:
                 music_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "assets", "music"))
                 if custom_song_path:
@@ -481,8 +476,19 @@ class Shorts:
                     song_path = candidate if os.path.exists(candidate) else choose_random_song()
                 else:
                     song_path = choose_random_song()
-                song_clip = AudioFileClip(song_path).set_fps(44100)
 
+            if ffmpeg_add_music_to_video(original_video_path, song_path, output_path, volume=0.1):
+                self.final_music_video_path = output_filename
+                if original_video_path:
+                    self._copy_metadata_to(original_video_path, output_path)
+                return
+
+            print(colored("[*] Falling back to MoviePy for audio mix.", "yellow"))
+            video_clip = VideoFileClip(original_video_path)
+            original_duration = video_clip.duration
+            original_audio = video_clip.audio
+
+            song_clip = AudioFileClip(song_path).set_fps(44100)
             song_clip = song_clip.volumex(0.1).set_fps(44100)
 
             comp_audio = CompositeAudioClip([original_audio, song_clip])
@@ -490,13 +496,10 @@ class Shorts:
             video_clip = video_clip.set_fps(30)
             video_clip = video_clip.set_duration(original_duration)
 
-            video_clip.write_videofile(
-                os.path.join(dest_dir, self.final_music_video_path),
-                threads=n_threads or 1,
-            )
+            video_clip.write_videofile(output_path, threads=2)
 
             if original_video_path:
-                self._copy_metadata_to(original_video_path, os.path.join(dest_dir, self.final_music_video_path))
+                self._copy_metadata_to(original_video_path, output_path)
 
             try:
                 video_clip.close()
@@ -506,15 +509,10 @@ class Shorts:
                 song_clip.close()
             except Exception:
                 pass
+
+            self.final_music_video_path = output_filename
         except Exception as e:
             print(colored(f"[-] Error adding music: {e}", "red"))
-            try:
-                video_clip.write_videofile(
-                    os.path.join(dest_dir, self.final_music_video_path),
-                    threads=n_threads or 1,
-                )
-            except Exception as ee:
-                print(colored(f"[-] Could not write fallback video: {ee}", "red"))
 
     def Stop(self):
         global GENERATING

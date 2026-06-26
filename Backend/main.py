@@ -397,7 +397,14 @@ def search_and_download():
                 "finalAudio": final_audio_path,
                 "subtitles": final_subtitles_path,
                 # Should remove the complete path and just leave the 
-                "finalVideo": final_video_path
+                "finalVideo": final_video_path,
+                "metadata": {
+                    "title": videoClass.video_title,
+                    "description": videoClass.video_description,
+                    "tags": videoClass.video_tags if hasattr(videoClass, 'video_tags') else [],
+                    "post_content": videoClass.video_post_content if hasattr(videoClass, 'video_post_content') else "",
+                    "suggested_schedule": videoClass.suggested_schedule if hasattr(videoClass, 'suggested_schedule') else ""
+                }
             }
         }
     )
@@ -1095,6 +1102,33 @@ def schedule_to_magicsync():
     except Exception as e:
         print(colored(f"[-] Error scheduling video: {str(e)}", "red"))
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/video/delete", methods=["POST"])
+def delete_video():
+    data = request.get_json()
+    filename = data.get("filename", "")
+    if not filename:
+        return jsonify({"status": "error", "message": "filename is required"}), 400
+
+    generated_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "generated_videos"))
+    video_path = os.path.join(generated_dir, filename)
+    basename = os.path.splitext(filename)[0]
+    json_path = os.path.join(generated_dir, f"{basename}.json")
+
+    deleted = []
+    if os.path.exists(video_path):
+        os.remove(video_path)
+        deleted.append(filename)
+    if os.path.exists(json_path):
+        os.remove(json_path)
+        deleted.append(f"{basename}.json")
+
+    if not deleted:
+        return jsonify({"status": "error", "message": "Video file not found"}), 404
+
+    print(colored(f"[+] Deleted: {', '.join(deleted)}", "green"))
+    return jsonify({"status": "success", "message": f"Deleted {', '.join(deleted)}"})
 
 
 @app.route("/api/leadgen/health", methods=["GET"])

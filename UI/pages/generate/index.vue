@@ -10,6 +10,8 @@
  * @todo [ ] Integration test.
  * @todo [✔] Update the typescript.
  */
+import { useStorage } from "@vueuse/core";
+
 interface Step {
   text: string; // Display text for the step
   afterText?: string; // Text to show after step completion
@@ -19,6 +21,20 @@ interface Step {
 }
 const router = useRouter();
 const API_URL = "http://localhost:8080";
+
+interface MagicSyncAccount {
+  platform: string
+  accountName: string
+  isActive: boolean
+}
+
+interface MagicSyncBusiness {
+  id: string
+  name: string
+  url: string
+  apiToken: string
+  videoBaseUrl: string
+}
 
 const { globalSettings } = useGlobalSettings();
 const { video } = useVideoSettings();
@@ -85,73 +101,6 @@ const handleImageUpload = async (event: Event) => {
 
 const removeImage = (idx: number) => {
   video.value.images.splice(idx, 1)
-}
-
-const thumbnailTimestamp = ref(0)
-const extractingThumbnail = ref(false)
-
-const extractThumbnail = async () => {
-  if (!video.value.selectedVideoUrls.length) return
-  const sourceUrl = video.value.selectedVideoUrls[0].url
-
-  extractingThumbnail.value = true
-  try {
-    const { Input, ALL_FORMATS, UrlSource, CanvasSink } = await import('mediabunny')
-
-    const input = new Input({
-      source: new UrlSource(sourceUrl),
-      formats: ALL_FORMATS,
-    })
-
-    const videoTrack = await input.getPrimaryVideoTrack()
-    if (!videoTrack) throw new Error('No video track found')
-
-    const displayWidth = await videoTrack.getDisplayWidth()
-    const displayHeight = await videoTrack.getDisplayHeight()
-    const thumbSize = 400
-    const width = displayWidth > displayHeight
-      ? thumbSize
-      : Math.floor(thumbSize * displayWidth / displayHeight)
-    const height = displayHeight > displayWidth
-      ? thumbSize
-      : Math.floor(thumbSize * displayHeight / displayWidth)
-
-    const sink = new CanvasSink(videoTrack, {
-      width: Math.floor(width * window.devicePixelRatio),
-      height: Math.floor(height * window.devicePixelRatio),
-      fit: 'fill',
-    })
-
-    const wrappedCanvas = await sink.canvasAtTimestamp(thumbnailTimestamp.value)
-    input.close()
-
-    if (!wrappedCanvas) throw new Error('Could not extract frame')
-
-    const canvas = wrappedCanvas.canvas as HTMLCanvasElement
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), 'image/jpeg', 0.9)
-    })
-
-    const formData = new FormData()
-    formData.append('file', blob, `thumbnail_${thumbnailTimestamp.value}s.jpg`)
-
-    const res = await $fetch<{ status: string; data: { paths: string[] } }>(
-      `${API_URL}/api/upload-image`,
-      { method: 'POST', body: formData }
-    )
-
-    if (res.status === 'success') {
-      video.value.images.unshift({
-        path: res.data.paths[0],
-        name: `Thumbnail @${thumbnailTimestamp.value}s`,
-        duration: video.value.imageDuration || 5,
-      })
-    }
-  } catch (e: any) {
-    console.error("Thumbnail extraction failed", e)
-  } finally {
-    extractingThumbnail.value = false
-  }
 }
 
 const triggerImagePicker = () => {
@@ -295,6 +244,7 @@ const HandleGenerateVideo = async () => {
       },
     });
     video.value.finalVideoUrl = data.finalVideo;
+    video.value.lastMetadata = data.metadata;
     currentState.value = "script";
 
   } catch (error) {
@@ -373,6 +323,7 @@ const HandleClear = () => {
     customAudioPath: "",
     audioStartTime: 0,
     audioEndTime: 0,
+    lastMetadata: null,
   };
   settingsModal.value = "IDLE";
   showModal.value = true;
@@ -387,6 +338,215 @@ const SearchModal = ref(false);
 const HandleOpenSearchVideo = () => {
   SearchModal.value = !SearchModal.value;
 };
+
+// Thumbnail extraction modal
+const thumbnailModal = ref(false)
+const thumbnailTargetUrl = ref('')
+const thumbnailTimestamp = ref(0)
+const extractingThumbnail = ref(false)
+
+const openThumbnailModal = () => {
+  thumbnailModal.value = true
+}
+
+const extractThumbnail = async () => {
+  if (!thumbnailTargetUrl.value) return
+  const sourceUrl = thumbnailTargetUrl.value
+
+  extractingThumbnail.value = true
+  try {
+    const { Input, ALL_FORMATS, UrlSource, CanvasSink } = await import('mediabunny')
+
+    const input = new Input({
+      source: new UrlSource(sourceUrl),
+      formats: ALL_FORMATS,
+    })
+
+    const videoTrack = await input.getPrimaryVideoTrack()
+    if (!videoTrack) throw new Error('No video track found')
+
+    const displayWidth = await videoTrack.getDisplayWidth()
+    const displayHeight = await videoTrack.getDisplayHeight()
+    const thumbSize = 400
+    const width = displayWidth > displayHeight
+      ? thumbSize
+      : Math.floor(thumbSize * displayWidth / displayHeight)
+    const height = displayHeight > displayWidth
+      ? thumbSize
+      : Math.floor(thumbSize * displayHeight / displayWidth)
+
+    const sink = new CanvasSink(videoTrack, {
+      width: Math.floor(width * window.devicePixelRatio),
+      height: Math.floor(height * window.devicePixelRatio),
+      fit: 'fill',
+    })
+
+    const wrappedCanvas = await sink.canvasAtTimestamp(thumbnailTimestamp.value)
+    input.close()
+
+    if (!wrappedCanvas) throw new Error('Could not extract frame')
+
+    const canvas = wrappedCanvas.canvas as HTMLCanvasElement
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), 'image/jpeg', 0.9)
+    })
+
+    const formData = new FormData()
+    formData.append('file', blob, `thumbnail_${thumbnailTimestamp.value}s.jpg`)
+
+    const res = await $fetch<{ status: string; data: { paths: string[] } }>(
+      `${API_URL}/api/upload-image`,
+      { method: 'POST', body: formData }
+    )
+
+    if (res.status === 'success') {
+      video.value.images.unshift({
+        path: res.data.paths[0],
+        name: `Thumbnail @${thumbnailTimestamp.value}s`,
+        duration: 0.05,
+      })
+    }
+  } catch (e: any) {
+    console.error("Thumbnail extraction failed", e)
+  } finally {
+    extractingThumbnail.value = false
+    thumbnailModal.value = false
+  }
+}
+
+// Schedule Upload state
+const scheduleModal = ref(false)
+const scheduleDate = ref<number | null>(null)
+const scheduleTime = ref<number | null>(null)
+const scheduleContent = ref('')
+const scheduleTitle = ref('')
+const scheduleDescription = ref('')
+const scheduling = ref(false)
+const scheduleResult = ref<string | null>(null)
+const selectedPlatforms = ref<string[]>([])
+const magicsyncAccounts = ref<MagicSyncAccount[]>([])
+const magicsyncLoading = ref(false)
+const magicsyncBusinesses = useStorage<MagicSyncBusiness[]>("MAGICSYNC_BUSINESSES", [])
+const selectedBusinessId = ref<string | null>(null)
+
+const openScheduleModal = async () => {
+  scheduleDate.value = null
+  scheduleTime.value = null
+  scheduleResult.value = null
+  selectedPlatforms.value = []
+  magicsyncAccounts.value = []
+  scheduleContent.value = ''
+  scheduleTitle.value = ''
+  scheduleDescription.value = ''
+
+  // Pre-fill from stored generate metadata
+  if (video.value.lastMetadata) {
+    scheduleContent.value = video.value.lastMetadata.post_content || video.value.lastMetadata.title || video.value.lastMetadata.description || ''
+    scheduleTitle.value = video.value.lastMetadata.title || ''
+    scheduleDescription.value = video.value.lastMetadata.description || ''
+    if (video.value.lastMetadata.suggested_schedule) {
+      const d = new Date(video.value.lastMetadata.suggested_schedule)
+      scheduleDate.value = d.getTime()
+      scheduleTime.value = d.getTime()
+    }
+  }
+
+  if (magicsyncBusinesses.value.length > 0) {
+    selectedBusinessId.value = magicsyncBusinesses.value[0].id
+    await fetchAccountsForBusiness(selectedBusinessId.value)
+  } else {
+    selectedBusinessId.value = null
+  }
+
+  scheduleModal.value = true
+}
+
+async function fetchAccountsForBusiness(businessId: string | null) {
+  if (!businessId) {
+    magicsyncAccounts.value = []
+    selectedPlatforms.value = []
+    return
+  }
+  const biz = magicsyncBusinesses.value.find(b => b.id === businessId)
+  if (!biz) return
+  magicsyncLoading.value = true
+  magicsyncAccounts.value = []
+  selectedPlatforms.value = []
+  try {
+    const res = await $fetch<{ status: string; data: { accounts: MagicSyncAccount[] }; message?: string }>(
+      `${API_URL}/api/magicsync/accounts`,
+      { method: 'POST', body: { url: biz.url, apiToken: biz.apiToken } }
+    )
+    if (res.status === 'success') {
+      magicsyncAccounts.value = res.data.accounts.filter(a => a.isActive)
+      selectedPlatforms.value = [...new Set(magicsyncAccounts.value.map(a => a.platform))]
+    }
+  } catch (e) {
+    console.error('Failed to fetch MagicSync accounts', e)
+  } finally {
+    magicsyncLoading.value = false
+  }
+}
+
+const togglePlatform = (platform: string) => {
+  const idx = selectedPlatforms.value.indexOf(platform)
+  if (idx >= 0) {
+    selectedPlatforms.value.splice(idx, 1)
+  } else {
+    selectedPlatforms.value.push(platform)
+  }
+}
+
+const uniquePlatforms = computed(() => {
+  const seen = new Set<string>()
+  for (const acc of magicsyncAccounts.value) {
+    seen.add(acc.platform)
+  }
+  return [...seen]
+})
+
+const handleSchedule = async () => {
+  if (!scheduleDate.value || !scheduleTime.value) return
+  if (selectedPlatforms.value.length === 0) return
+  if (!selectedBusinessId.value) return
+
+  const biz = magicsyncBusinesses.value.find(b => b.id === selectedBusinessId.value)
+  if (!biz) return
+
+  scheduling.value = true
+  scheduleResult.value = null
+
+  try {
+    const date = new Date(scheduleDate.value)
+    const time = new Date(scheduleTime.value)
+    date.setHours(time.getHours(), time.getMinutes(), 0, 0)
+    const scheduledAt = date.toISOString()
+    const filename = video.value.finalVideoUrl.split('/').pop()
+
+    await $fetch(`${API_URL}/api/schedule-to-magicsync`, {
+      method: 'POST',
+      body: {
+        videoFilename: filename,
+        scheduledAt,
+        content: scheduleContent.value,
+        title: scheduleTitle.value,
+        description: scheduleDescription.value,
+        platforms: selectedPlatforms.value,
+        url: biz.url,
+        apiToken: biz.apiToken,
+        videoBaseUrl: biz.videoBaseUrl,
+      }
+    })
+
+    scheduleResult.value = 'success'
+    setTimeout(() => { scheduleModal.value = false }, 2000)
+  } catch (e: any) {
+    scheduleResult.value = `Error: ${e?.data?.message || e?.message || 'Unknown error'}`
+  } finally {
+    scheduling.value = false
+  }
+}
+
 const customAudioInput = ref(null);
 const customAudioPlayer = ref<HTMLAudioElement | null>(null);
 const isRecording = ref(false);
@@ -715,24 +875,11 @@ function handleStateChange(state: number) {
 
               <!-- Thumbnail extraction from video -->
               <div v-if="video.selectedVideoUrls.length > 0" class="bg-slate-700/40 rounded p-3">
-                <p class="text-xs font-medium mb-2">Extract Thumbnail from Video</p>
-                <div class="flex items-center gap-2">
-                  <n-input-number v-model:value="thumbnailTimestamp" :min="0" :max="60" size="small" class="w-20">
-                    <template #prefix>@</template>
-                  </n-input-number>
-                  <span class="text-xs text-gray-400">sec</span>
-                  <n-button size="small" :loading="extractingThumbnail" @click="extractThumbnail">
-                    <template #icon><Icon name="mdi:camera" /></template>
-                    Extract
-                  </n-button>
-                </div>
-                <div class="flex gap-1 mt-1">
-                  <n-button size="tiny" quaternary @click="thumbnailTimestamp = 0">0s</n-button>
-                  <n-button size="tiny" quaternary @click="thumbnailTimestamp = 1">1s</n-button>
-                  <n-button size="tiny" quaternary @click="thumbnailTimestamp = 2">2s</n-button>
-                  <n-button size="tiny" quaternary @click="thumbnailTimestamp = 5">5s</n-button>
-                  <n-button size="tiny" quaternary @click="thumbnailTimestamp = 10">10s</n-button>
-                </div>
+                <p class="text-xs font-medium mb-2">Extract Frame from Video</p>
+                <n-button size="small" @click="openThumbnailModal">
+                  <template #icon><Icon name="mdi:camera" /></template>
+                  Select Video & Extract
+                </n-button>
               </div>
 
               <div class="flex items-center gap-2">
@@ -960,6 +1107,12 @@ function handleStateChange(state: number) {
             >
               Add Music
             </n-button>
+            <n-button type="primary" dashed size="large" @click="openScheduleModal">
+              <template #icon>
+                <Icon name="mdi:calendar-clock" />
+              </template>
+              Schedule
+            </n-button>
             <n-button type="default" dashed size="large" @click="HandleClearAndGoToVideos">
               Videos
             </n-button>
@@ -1018,5 +1171,152 @@ function handleStateChange(state: number) {
       </n-tabs>
     </div>
   </n-modal>
+
+    <n-modal
+      v-model:show="scheduleModal"
+      preset="card"
+      title="Schedule Upload"
+      style="max-width: 520px"
+      :mask-closable="false"
+    >
+      <div class="space-y-4">
+        <div v-if="video.finalVideoUrl">
+          <p class="text-sm text-gray-400">
+            Video:
+            <span class="text-white">{{ video.lastMetadata?.title || video.finalVideoUrl.split('/').pop() }}</span>
+          </p>
+        </div>
+
+        <div v-if="magicsyncBusinesses.length > 0">
+          <label class="block text-sm text-gray-400 mb-1">Business</label>
+          <n-select
+            v-model:value="selectedBusinessId"
+            :options="magicsyncBusinesses.map(b => ({ label: b.name, value: b.id }))"
+            class="w-full"
+            @update:value="fetchAccountsForBusiness"
+          />
+        </div>
+
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Date</label>
+          <n-date-picker v-model:value="scheduleDate" type="date" class="w-full" />
+        </div>
+
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Time</label>
+          <n-time-picker v-model:value="scheduleTime" class="w-full" />
+        </div>
+
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Post Content</label>
+          <n-input v-model:value="scheduleContent" type="textarea" :rows="3" placeholder="Post text..." class="w-full" />
+        </div>
+
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Title (optional)</label>
+          <n-input v-model:value="scheduleTitle" placeholder="Video title" class="w-full" />
+        </div>
+
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Description (optional)</label>
+          <n-input v-model:value="scheduleDescription" type="textarea" :rows="2" placeholder="Video description" class="w-full" />
+        </div>
+
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">
+            Post to
+            <span v-if="magicsyncLoading" class="text-xs ml-1">(loading...)</span>
+          </label>
+          <div v-if="magicsyncLoading" class="flex items-center gap-2 text-sm text-gray-500">
+            <n-spin size="small" />
+            Fetching connected accounts...
+          </div>
+          <div v-else-if="magicsyncBusinesses.length === 0" class="text-sm text-yellow-400">
+            No MagicSync businesses configured.
+            <NuxtLink to="/settings" class="underline">Add one in Settings</NuxtLink>
+          </div>
+          <div v-else-if="uniquePlatforms.length === 0 && !magicsyncLoading" class="text-sm text-yellow-400">
+            No connected accounts for this business.
+          </div>
+          <div v-else class="space-y-2">
+            <div v-for="platform in uniquePlatforms" :key="platform" class="flex items-center gap-2">
+              <n-checkbox
+                :checked="selectedPlatforms.includes(platform)"
+                @update:checked="togglePlatform(platform)"
+              >
+                <span class="text-sm capitalize">{{ platform }}</span>
+              </n-checkbox>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="scheduleResult === 'success'" class="text-green-400 text-sm font-medium">
+          Scheduled successfully!
+        </div>
+        <div v-else-if="scheduleResult" class="text-red-400 text-sm">
+          {{ scheduleResult }}
+        </div>
+
+        <div class="flex gap-3 pt-2">
+          <n-button @click="scheduleModal = false" class="flex-1">Cancel</n-button>
+          <n-button
+            type="primary"
+            class="flex-1"
+            :loading="scheduling"
+            :disabled="!scheduleDate || !scheduleTime || selectedPlatforms.length === 0"
+            @click="handleSchedule"
+          >
+            Schedule
+          </n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal
+      v-model:show="thumbnailModal"
+      preset="card"
+      title="Extract Frame from Video"
+      style="max-width: 480px"
+      :mask-closable="false"
+    >
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Select Video</label>
+          <n-select
+            v-model:value="thumbnailTargetUrl"
+            :options="video.selectedVideoUrls.map((v, i) => ({
+              label: v.url.split('/').pop() || `Video ${i + 1}`,
+              value: v.url
+            }))"
+            placeholder="Choose a video"
+          />
+        </div>
+
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Timestamp (seconds)</label>
+          <n-input-number v-model:value="thumbnailTimestamp" :min="0" :max="300" size="large" class="w-full" />
+          <div class="flex gap-1 mt-2">
+            <n-button size="tiny" @click="thumbnailTimestamp = 0">0s</n-button>
+            <n-button size="tiny" @click="thumbnailTimestamp = 1">1s</n-button>
+            <n-button size="tiny" @click="thumbnailTimestamp = 2">2s</n-button>
+            <n-button size="tiny" @click="thumbnailTimestamp = 5">5s</n-button>
+            <n-button size="tiny" @click="thumbnailTimestamp = 10">10s</n-button>
+          </div>
+        </div>
+
+        <div class="flex gap-3 pt-2">
+          <n-button @click="thumbnailModal = false" class="flex-1">Cancel</n-button>
+          <n-button
+            type="primary"
+            class="flex-1"
+            :loading="extractingThumbnail"
+            :disabled="!thumbnailTargetUrl"
+            @click="extractThumbnail"
+          >
+            Extract & Add (0.05s)
+          </n-button>
+        </div>
+      </div>
+    </n-modal>
 </template>
 <style scoped></style>

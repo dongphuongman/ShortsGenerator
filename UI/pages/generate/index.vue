@@ -241,6 +241,7 @@ const HandleGenerateVideo = async () => {
         images: (video.value.images || []).map((img: any) => img.path),
         imageDurations: (video.value.images || []).map((img: any) => img.duration),
         imageDuration: video.value.imageDuration || 5,
+        clipDuration: video.value.clipDuration || 10,
       },
     });
     video.value.finalVideoUrl = data.finalVideo;
@@ -308,7 +309,7 @@ const HandleAddAudio = async () => {
   }
 };
 const HandleClear = () => {
-  video.value = {
+    video.value = {
     finalVideoUrl: "",
     selectedAudio: "",
     script: "",
@@ -323,6 +324,8 @@ const HandleClear = () => {
     customAudioPath: "",
     audioStartTime: 0,
     audioEndTime: 0,
+    images: [],
+    imageDuration: 5,
     lastMetadata: null,
   };
   settingsModal.value = "IDLE";
@@ -903,6 +906,18 @@ function handleStateChange(state: number) {
                 </div>
               </div>
             </div>
+          </section>
+          <section class="clip-duration dark:bg-slate-800 bg-slate-100 rounded-lg min-h-40 p-5">
+            <header class="flex items-center">
+              <Icon name="material-symbols:timeline" size="24" />
+              <span class="text-lg ml-2">Clip Duration</span>
+            </header>
+            <article class="mt-4 flex items-center gap-3">
+              <span class="text-sm text-gray-400">Max seconds per video clip</span>
+              <n-input-number v-model:value="video.clipDuration" :min="1" :max="60" size="small" class="w-24">
+                <template #prefix>Sec</template>
+              </n-input-number>
+            </article>
           </section>
           <section class="voice dark:bg-slate-800 bg-slate-100 rounded-lg min-h-40 p-5">
             <header class="flex items-center">

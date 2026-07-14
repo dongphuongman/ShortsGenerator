@@ -37,10 +37,10 @@ def generate_response(prompt: str, ai_model: str) -> str:
     """
 
     if ai_model == 'g4f':
-        from g4f.client import Client
+        from g4f.client import Client as G4FClient
         from g4f import Provider
-        client = Client(provider=Provider.Gemini)
-        response = client.chat.completions.create(
+        g4f_client = G4FClient(provider=Provider.Gemini)
+        response = g4f_client.chat.completions.create(
             model="gemini-3.5-flash",
             messages=[{"role": "user", "content": prompt}],
             web_search=False
@@ -48,6 +48,8 @@ def generate_response(prompt: str, ai_model: str) -> str:
         return response.choices[0].message.content
 
     elif ai_model == 'gemmini':
+        if client is None:
+            raise ValueError("GOOGLE_API_KEY not configured")
         response = client.models.generate_content(
             model='gemini-2.0-flash',
             contents=prompt

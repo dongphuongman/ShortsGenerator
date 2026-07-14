@@ -4,12 +4,13 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 class InstagramDownloader:
-    def __init__(self, output_path: str = "downloads"):
+    def __init__(self, output_path: str = "downloads", cookies_from_browser: Optional[str] = None):
         """
         Initialize the Instagram video downloader
         
         Args:
             output_path (str): Directory where videos will be saved
+            cookies_from_browser (str, optional): Browser to extract cookies from (e.g. 'chrome')
         """
         self.output_path = output_path
         self._create_output_directory()
@@ -22,6 +23,9 @@ class InstagramDownloader:
             'no_warnings': False,
             'extract_flat': False,
         }
+
+        if cookies_from_browser:
+            self.ydl_opts['cookiesfrombrowser'] = (cookies_from_browser,)
 
     def _get_timestamped_filename(self, original_path: str) -> str:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

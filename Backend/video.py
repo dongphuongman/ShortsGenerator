@@ -178,7 +178,7 @@ def _ffmpeg_images_to_video(image_paths: List[str], duration_per_image: float, t
         filter_parts.append(scale_filter)
 
     loop_input = "".join([f"[v{i}]" for i in range(len(inputs))])
-    concat_filter = f"{loop_input}concat=n={len(inputs)}:v=1:a=0[vout];"
+    concat_filter = f"{loop_input}concat=n={len(inputs)}:v=1:a=0[vout]"
     filter_parts.append(concat_filter)
 
     filter_complex = "".join(filter_parts)
@@ -303,43 +303,118 @@ def _ffprobe_duration(path: str) -> float:
     return 0.0
 
 
-def _ffmpeg_concat_clips(clip_paths: List[str], target_duration: float, target_w: int, target_h: int, output_path: str) -> bool:
+def _ffmpeg_concat_clips(clip_paths: List[str], target_duration: float, target_w: int, target_h: int, output_path: str, max_clip_duration: int = 0) -> bool:
     if not clip_paths:
         return False
 
-    inputs = []
-    for p in clip_paths:
-        if os.path.exists(p):
-            inputs.append(p)
-
+    inputs = [p for p in clip_paths if p and os.path.exists(p)]
     if not inputs:
         return False
 
+    import random
+
+    # Get durations of all videos
+    video_durations = [_ffprobe_duration(p) for p in inputs]
+
+    # Fallback duration for unreadable files
+    fallback_dur = float(max_clip_duration) if max_clip_duration > 0 else 5.0
+
+    # Track the furthest point consumed from each video
+    used_up_to = [0.0] * len(inputs)
+
+    # Build segment list: (input_index, start_time, duration)
+    segments = []
+    total_segments_dur = 0.0
+    safety = 0
+
+    while total_segments_dur < target_duration and safety < 2000:
+        safety += 1
+        any_added = False
+
+        for i in range(len(inputs)):
+            if total_segments_dur >= target_duration:
+                break
+
+            vid_dur = video_durations[i]
+            if vid_dur <= 0:
+                vid_dur = fallback_dur
+
+            # Determine segment start
+            if vid_dur <= 0:
+                continue
+
+            if used_up_to[i] == 0.0:
+                # First pass: start from 0
+                seg_start = 0.0
+            elif used_up_to[i] >= vid_dur:
+                # Fully consumed — wrap around with random offset
+                if max_clip_duration > 0 and vid_dur > max_clip_duration:
+                    max_start = vid_dur - max_clip_duration
+                    seg_start = random.uniform(0, max_start)
+                else:
+                    seg_start = 0.0
+                used_up_to[i] = seg_start
+            else:
+                # Subsequent pass: pick random start after previously used point
+                remaining = vid_dur - used_up_to[i]
+                if remaining <= 0:
+                    seg_start = 0.0
+                    used_up_to[i] = 0.0
+                elif max_clip_duration > 0 and remaining > max_clip_duration:
+                    max_start = vid_dur - max_clip_duration
+                    if max_start <= used_up_to[i]:
+                        seg_start = used_up_to[i]
+                    else:
+                        seg_start = random.uniform(used_up_to[i], max_start)
+                else:
+                    seg_start = used_up_to[i]
+
+            dur_available = vid_dur - seg_start
+            if dur_available <= 0:
+                continue
+
+            seg_dur = min(
+                max_clip_duration if max_clip_duration > 0 else dur_available,
+                dur_available,
+            )
+
+            # Clip to remaining target duration
+            needed = target_duration - total_segments_dur
+            if seg_dur > needed:
+                seg_dur = needed
+
+            segments.append((i, seg_start, seg_dur))
+            used_up_to[i] = seg_start + seg_dur
+            total_segments_dur += seg_dur
+            any_added = True
+
+        if not any_added:
+            break
+
+    if not segments:
+        print(colored("[-] No segments could be generated.", "red"))
+        return False
+
+    n_segments = len(segments)
     filter_parts = []
-    for i, _ in enumerate(inputs):
+
+    for seg_idx, (input_idx, start_time, duration) in enumerate(segments):
         scale_filter = (
-            f"[{i}:v]scale=w={target_w}:h={target_h}:force_original_aspect_ratio=increase,"
-            f"crop={target_w}:{target_h},setsar=1,setpts=PTS-STARTPTS,format=yuv420p[v{i}]"
+            f"[{input_idx}:v]trim=start={start_time}:duration={duration},"
+            f"setpts=PTS-STARTPTS,"
+            f"scale=w={target_w}:h={target_h}:force_original_aspect_ratio=increase,"
+            f"crop={target_w}:{target_h},"
+            f"setsar=1,format=yuv420p[v{seg_idx}]"
         )
         filter_parts.append(scale_filter)
 
-    loop_input = "".join([f"[v{i}]" for i in range(len(inputs))])
-    concat_filter = f"{loop_input}concat=n={len(inputs)}:v=1:a=0[vv]"
+    all_inputs = "".join([f"[v{i}]" for i in range(n_segments)])
+    concat_filter = f"{all_inputs}concat=n={n_segments}:v=1:a=0[vfinal]"
     filter_parts.append(concat_filter)
-
-    total_input_duration = sum(_ffprobe_duration(p) for p in inputs)
-    if total_input_duration <= 0:
-        total_input_duration = len(inputs) * 5.0
-    loops = max(1, int(target_duration / total_input_duration) + 1)
-    if loops > 1:
-        loop_filter = f"[vv]loop=loop={loops}:size=1:start=0,trim=duration={target_duration},setpts=PTS-STARTPTS[vfinal]"
-    else:
-        loop_filter = f"[vv]trim=duration={target_duration},setpts=PTS-STARTPTS[vfinal]"
-    filter_parts.append(loop_filter)
 
     filter_complex = ";".join(filter_parts)
 
-    print(colored(f"[+] ffmpeg filter_complex: {filter_complex}", "cyan"))
+    print(colored(f"[+] ffmpeg segments: {n_segments} total, {total_segments_dur:.1f}s at {target_w}x{target_h}", "cyan"))
 
     cmd = ["ffmpeg", "-y"]
     for p in inputs:
@@ -368,7 +443,7 @@ def _ffmpeg_concat_clips(clip_paths: List[str], target_duration: float, target_w
         return False
 
 
-def combine_videos(video_paths: List[str], max_duration: float, max_clip_duration: int, threads: int, aspect_ratio: str = "9:16", image_paths: Optional[List[str]] = None, image_duration: float = 5.0, image_durations: Optional[List[float]] = None) -> str:
+def combine_videos(video_paths: List[str], max_duration: float, max_clip_duration: int, threads: int, aspect_ratio: str = "9:16", image_paths: Optional[List[str]] = None, image_duration: float = 5.0, image_durations: Optional[List[float]] = None, buffer_time: float = 3.0) -> str:
     video_id = uuid.uuid4()
     temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "assets", "temp"))
     os.makedirs(temp_dir, exist_ok=True)
@@ -405,12 +480,26 @@ def combine_videos(video_paths: List[str], max_duration: float, max_clip_duratio
 
     print(colored(f"[+] Combining {len(valid_paths)} videos at {aspect_ratio} ({target_w}x{target_h})...", "blue"))
 
+    # Detect single-video + images: if only 1 video file and images exist, use full video
+    real_video_count = len(valid_paths)
+    if image_video_path and image_video_path in valid_paths:
+        real_video_count -= 1
+    if real_video_count <= 1 and image_video_path is not None:
+        effective_clip_duration = 0  # No trim, use full video
+        print(colored("[+] Single video + images: using full video duration (no clip)", "cyan"))
+    else:
+        effective_clip_duration = max_clip_duration
+
+    # Add buffer time to target duration to ensure video covers full audio + buffer
+    target_duration_with_buffer = float(max_duration) + buffer_time
+
     use_ffmpeg = _ffmpeg_concat_clips(
         valid_paths,
-        target_duration=float(max_duration),
+        target_duration=target_duration_with_buffer,
         target_w=target_w,
         target_h=target_h,
         output_path=combined_video_path,
+        max_clip_duration=effective_clip_duration,
     )
 
     if use_ffmpeg:
@@ -419,26 +508,69 @@ def combine_videos(video_paths: List[str], max_duration: float, max_clip_duratio
 
     print(colored("[*] Falling back to MoviePy-based combination.", "yellow"))
 
-    req_dur = float(max_duration) / max(1, len(valid_paths))
+    import random
+
+    # Track per-video usage: video_path -> furthest consumed point
+    used_up_to = {p: 0.0 for p in valid_paths}
 
     clips = []
     tot_dur = 0
-    while tot_dur < max_duration:
+    safety = 0
+    max_clip = float(effective_clip_duration) if effective_clip_duration > 0 else None
+
+    while tot_dur < target_duration_with_buffer and safety < 2000:
+        safety += 1
+        any_added = False
+
         for video_path in valid_paths:
+            if tot_dur >= target_duration_with_buffer:
+                break
+
+            full_dur = _ffprobe_duration(video_path)
+            if full_dur <= 0:
+                full_dur = max_clip if max_clip else 5.0
+
+            # Determine segment start
+            cur = used_up_to[video_path]
+            if cur == 0.0:
+                seg_start = 0.0
+            elif cur >= full_dur:
+                # Fully consumed — wrap around with random offset
+                if max_clip and full_dur > max_clip:
+                    seg_start = random.uniform(0, full_dur - max_clip)
+                else:
+                    seg_start = 0.0
+                used_up_to[video_path] = seg_start
+            else:
+                remaining = full_dur - cur
+                if remaining <= 0:
+                    seg_start = 0.0
+                    used_up_to[video_path] = 0.0
+                elif max_clip and remaining > max_clip:
+                    max_possible_start = full_dur - max_clip
+                    if max_possible_start <= cur:
+                        seg_start = cur
+                    else:
+                        seg_start = random.uniform(cur, max_possible_start)
+                else:
+                    seg_start = cur
+
+            dur_available = full_dur - seg_start
+            if dur_available <= 0:
+                continue
+
+            seg_dur = min(max_clip if max_clip else dur_available, dur_available)
+            needed = target_duration_with_buffer - tot_dur
+            if seg_dur > needed:
+                seg_dur = needed
+
             try:
                 clip = VideoFileClip(video_path)
             except Exception as e:
                 print(colored(f"[-] Could not open {video_path}: {e}", "yellow"))
                 continue
 
-            if clip is None:
-                continue
-
-            clip = clip.without_audio()
-            if (max_duration - tot_dur) < clip.duration:
-                clip = clip.subclip(0, (max_duration - tot_dur))
-            elif req_dur < clip.duration:
-                clip = clip.subclip(0, req_dur)
+            clip = clip.without_audio().subclip(seg_start, seg_start + seg_dur)
 
             source_ratio = round(clip.w / clip.h, 4) if clip.h else 1.0
             if source_ratio < target_ratio:
@@ -459,11 +591,13 @@ def combine_videos(video_paths: List[str], max_duration: float, max_clip_duratio
                 )
             clip = clip.resize((target_w, target_h))
 
-            if clip.duration > max_clip_duration:
-                clip = clip.subclip(0, max_clip_duration)
-
             clips.append(clip)
-            tot_dur += clip.duration
+            used_up_to[video_path] = seg_start + seg_dur
+            tot_dur += seg_dur
+            any_added = True
+
+        if not any_added:
+            break
 
     if not clips:
         print(colored("[-] No clips could be processed.", "red"))
@@ -520,6 +654,7 @@ def _ffmpeg_render_with_subtitles(
     position: str,
     target_w: int,
     target_h: int,
+    buffer_time: float = 3.0,
 ) -> bool:
     def hex_to_ass(hex_color: str) -> str:
         h = hex_color.lstrip("#")
@@ -563,11 +698,20 @@ def _ffmpeg_render_with_subtitles(
     safe_subs = subtitles_path.replace(":", "\\:")
     safe_fontdir = font_dir.replace(":", "\\:")
 
+    # Get audio duration to calculate total video length (audio + buffer)
+    audio_duration = _ffprobe_duration(audio_path)
+    total_duration = audio_duration + buffer_time if audio_duration > 0 else 0
+
+    # Build trim filter to ensure video matches audio + buffer duration
+    # This removes the need for -shortest flag which could truncate audio
+    trim_filter = f",trim=duration={total_duration},setpts=PTS-STARTPTS" if total_duration > 0 else ""
+    video_filter = f"subtitles={safe_subs}:fontsdir={safe_fontdir}:original_size={target_w}x{target_h}:force_style={escaped_style}{trim_filter}"
+
     cmd = [
         "ffmpeg", "-y", "-hwaccel", "auto",
         "-i", video_path,
         "-i", audio_path,
-        "-vf", f"subtitles={safe_subs}:fontsdir={safe_fontdir}:original_size={target_w}x{target_h}:force_style={escaped_style}",
+        "-vf", video_filter,
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-crf", "23",
@@ -575,7 +719,6 @@ def _ffmpeg_render_with_subtitles(
         "-c:a", "aac",
         "-map", "0:v:0",
         "-map", "1:a:0",
-        "-shortest",
         "-movflags", "+faststart",
         output_path,
     ]
@@ -602,6 +745,7 @@ def generate_video(
     subtitles_position: str,
     subtitle_template: str = "classic",
     aspect_ratio: str = "9:16",
+    buffer_time: float = 3.0,
 ) -> str:
     print(colored("[+] Starting video generation...", "green"))
 
@@ -663,6 +807,7 @@ def generate_video(
         f"{horizontal_subtitles_position},{vertical_subtitles_position}",
         target_w,
         target_h,
+        buffer_time=buffer_time,
     ):
         return fast_video_name
 
@@ -692,7 +837,8 @@ def generate_video(
         return None
 
     audio = AudioFileClip(tts_path)
-    target_duration = float(audio.duration)
+    # Target duration includes buffer time after voice ends
+    target_duration = float(audio.duration) + buffer_time
 
     if base_video.duration < target_duration:
         try:
@@ -744,12 +890,18 @@ def ffmpeg_add_music_to_video(
     output_path: str,
     volume: float = 0.1,
 ) -> bool:
+    import subprocess
+    video_dur = _ffprobe_duration(video_path)
+    music_dur = _ffprobe_duration(music_path) or 1
+    loops = max(1, int(video_dur / music_dur) + 1) if music_dur > 0 else 1
+
     cmd = [
         "ffmpeg", "-y",
         "-i", video_path,
+        "-stream_loop", str(loops),
         "-i", music_path,
         "-filter_complex",
-        f"[0:a][1:a]amix=inputs=2:duration=first:volume={volume}[audio]",
+        f"[0:a]volume=1.0[0a];[1:a]volume={volume}[1a];[0a][1a]amix=inputs=2:duration=first[audio]",
         "-c:v", "copy",
         "-map", "0:v:0",
         "-map", "[audio]",

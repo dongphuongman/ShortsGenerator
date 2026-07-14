@@ -207,6 +207,8 @@ Create a HIGHLY ENGAGING, VIRAL-WORTHY 60-second video script that keeps viewers
 6. Include EMOTIONAL TRIGGERS: surprise, curiosity, FOMO, amusement
 7. Respond in the SAME LANGUAGE as the video subject
 8. Keep TOTAL script length around 80-120 words for 60-second video
+9. Format for AI VOICEOVER — natural spoken flow, no paragraph breaks, sentences must read aloud smoothly
+10. The HOOK is the single most important part — make it scroll-stopping, curiosity-gap driven
 
 ## SUBJECT:
 """,
@@ -246,6 +248,8 @@ Create an informative 60-second video script that teaches the viewer something v
 5. Include 1-2 surprising facts
 6. Keep around 100-130 words
 7. Respond in the SAME LANGUAGE as the video subject
+8. Format for AI VOICEOVER — natural spoken flow, no paragraph breaks, sentences must read aloud smoothly
+9. The HOOK is the single most important part — start with a question or problem that grabs attention instantly
 
 ## SUBJECT:
 """,
@@ -286,6 +290,8 @@ Create a CAPTIVATING 60-second narrative that takes the viewer on an emotional j
 5. Keep around 120-150 words
 6. Every sentence should advance the story
 7. Respond in the SAME LANGUAGE as the video subject
+8. Format for AI VOICEOVER — natural spoken flow, no paragraph breaks, sentences must read aloud smoothly
+9. The HOOK is critical — start IN THE MIDDLE of action to grab attention immediately
 
 ## SUBJECT:
 """,
@@ -325,6 +331,8 @@ Create an ENGAGING numbered-list format 60-second video script that delivers qui
 5. Keep around 80-100 words total
 6. Use BOLD claims and specific numbers
 7. Respond in the SAME LANGUAGE as the video subject
+8. Format for AI VOICEOVER — natural spoken flow, no paragraph breaks, sentences must read aloud smoothly
+9. The HOOK must promise specific, countable value in the first 3 seconds
 
 ## SUBJECT:
 """,
@@ -365,6 +373,8 @@ Create a BOLD, OPINIONATED 60-second script that challenges common beliefs and s
 5. Include specific examples
 6. End with an engagement hook
 7. Respond in the SAME LANGUAGE as the video subject
+8. Format for AI VOICEOVER — natural spoken flow, no paragraph breaks, sentences must read aloud smoothly
+9. The HOOK must be the most controversial, attention-grabbing statement possible
 
 ## SUBJECT:
 """,
@@ -405,6 +415,8 @@ Create an INSPIRING 60-second video script that motivates viewers to take action
 5. Every sentence should HIT
 6. End with a memorable one-liner
 7. Respond in the SAME LANGUAGE as the video subject
+8. Format for AI VOICEOVER — natural spoken flow, no paragraph breaks, sentences must read aloud smoothly
+9. The HOOK must build instant empathy and grab attention in the first 3 seconds
 
 ## SUBJECT:
 """,
@@ -417,25 +429,35 @@ scriptSettings = {
     "defaultPromptEnd":
         """
 ## FINAL REMINDERS:
-- NO markdown, NO formatting, NO titles
-- Pure raw script text only
-- Start with a BANG - no boring introductions
+- NO markdown, NO formatting, NO titles — pure raw script text ready for AI voiceover
+- Write in NATURAL, CONVERSATIONAL spoken language — sentences must flow naturally when read aloud by AI voice
+- Use SHORT, PUNCHY sentences (5-10 words per segment) that are easy for TTS to articulate
+- The FIRST 3 SECONDS must be the most hooking, attention-grabbing opener possible — make it impossible to scroll past
+- The hook is the SINGLE MOST IMPORTANT element — invest creative effort here
 - Every sentence must ADD VALUE or CREATE CURIOSITY
+- Use pattern interrupts and emotional triggers (surprise, curiosity, FOMO)
 - End with engagement hook
 - Write like you're telling a SECRET to a friend
+- Optimized for SOCIAL MEDIA SHORTS — high retention, punchy delivery, scroll-stopping structure
 """
 }
 
 ttsSettings = {
     "preferred_tts": "supertonic",
     "tts_voice": "M3",
-    "tts_lang": "en",
-    "tts_quality": 8,
+    "tts_lang": "es",
+    "tts_quality": 12,
     "tts_speed": 1.05,
 }
 
 imageSettings = {
     "default_duration": 5,
+}
+
+clipDurationSettings = {
+    "default": 10,
+    "min": 1,
+    "max": 60,
 }
 
 
@@ -576,6 +598,7 @@ def get_settings() -> dict:
         "fontOptions": fontOptions,
         "subtitleTemplates": subtitleTemplates,
         "imageSettings": imageSettings,
+        "clipDurationSettings": clipDurationSettings,
     }
 
 # Update the global settings

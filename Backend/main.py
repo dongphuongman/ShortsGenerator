@@ -88,7 +88,10 @@ def download_instagram_video():
             }), 400
 
         # Initialize downloader with output path in static/assets
-        downloader = InstagramDownloader(output_path=os.path.join(os.path.dirname(__file__), "static/generated_videos/instagram"))
+        downloader = InstagramDownloader(
+            output_path=os.path.join(os.path.dirname(__file__), "static/generated_videos/instagram"),
+            cookies_from_browser='chrome',
+        )
         
         # Download the video
         result = downloader.download_video(video_url)
@@ -159,13 +162,41 @@ def generate():
 
 
         script_template = data.get("scriptTemplate", "")
+        selectedVideoUrls = data.get("selectedVideoUrls", [])
+        directVideoPaths = data.get("directVideoPaths", [])
+        images = data.get("images", [])
+        image_duration = data.get("imageDuration", 5.0)
+        image_durations = data.get("imageDurations", [])
+        clip_duration = int(data.get("clipDuration", 10))
         videoClass = Shorts(data["videoSubject"], paragraph_number, ai_model, data["customPrompt"], script_template=script_template)
+        videoClass.clip_duration = clip_duration
         # Generate a script
         videoClass.GenerateScript()
         # Generate search terms
         videoClass.GenerateSearchTerms()
 
-        videoClass.DownloadVideos()
+        if directVideoPaths and len(directVideoPaths) > 0:
+            videoClass.video_paths = directVideoPaths
+            print(colored(f"[+] Using {len(directVideoPaths)} pre-downloaded video(s): {directVideoPaths}", "green"))
+        else:
+            videoClass.DownloadVideos(selectedVideoUrls)
+
+        if images:
+            temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "assets", "temp"))
+            resolved_images = []
+            resolved_durations = []
+            for i, img in enumerate(images):
+                img_path = os.path.join(temp_dir, os.path.basename(img))
+                if os.path.exists(img_path):
+                    resolved_images.append(img_path)
+                elif os.path.exists(img):
+                    resolved_images.append(img)
+                dur = float(image_durations[i]) if i < len(image_durations) and image_durations[i] else float(image_duration)
+                resolved_durations.append(dur)
+            videoClass.image_paths = resolved_images
+            videoClass.image_durations = resolved_durations
+            videoClass.image_duration = float(image_duration) if image_duration else 5.0
+            print(colored(f"[+] Using {len(resolved_images)} image(s) with durations: {resolved_durations}", "green"))
 
         if not GENERATING:
             return jsonify(
@@ -297,10 +328,7 @@ def generate_script_only():
 def search_and_download():
     # Set generating to true
     global GENERATING
-    GENERATING = True 
-     # Clean
-    clean_dir(os.path.join(os.path.dirname(__file__), "static/assets/temp/"))
-    clean_dir(os.path.join(os.path.dirname(__file__), "static/assets/subtitles/"))
+    GENERATING = True
 
     
     print(colored("[+] Received search and download request...", "green"))
@@ -311,6 +339,8 @@ def search_and_download():
     ai_model = data["aiModel"]
     voice = data["voice"]
     selectedVideoUrls = data.get("selectedVideoUrls",[])
+    directVideoPaths = data.get("directVideoPaths", [])
+    use_music = data.get("useMusic", False)
 
     # Extra options:
     custom_video = data.get("videoUrls",[])
@@ -340,8 +370,13 @@ def search_and_download():
     videoClass.subtitle_template = subtitle_template
     videoClass.aspect_ratio = aspect_ratio
     videoClass.custom_subtitle = custom_subtitle
+    videoClass.clip_duration = int(data.get("clipDuration", 10))
 
-    videoClass.DownloadVideos(selectedVideoUrls)
+    if directVideoPaths and len(directVideoPaths) > 0:
+        videoClass.video_paths = directVideoPaths
+        print(colored(f"[+] Using {len(directVideoPaths)} pre-downloaded video(s): {directVideoPaths}", "green"))
+    else:
+        videoClass.DownloadVideos(selectedVideoUrls)
 
     if images:
         temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "assets", "temp"))
@@ -360,12 +395,21 @@ def search_and_download():
         videoClass.image_duration = float(image_duration) if image_duration else 5.0
         print(colored(f"[+] Using {len(resolved_images)} image(s) with durations: {resolved_durations}", "green"))
 
-    videoClass.GenerateVoice(voice, custom_audio_path=custom_audio_path, audio_start_time=audio_start_time, audio_end_time=audio_end_time)
+    tts_quality = data.get("quality", 8)
+    tts_speed = data.get("speed", 1.05)
+    tts_lang = data.get("tts_lang", None)
+    if tts_lang:
+        from settings import update_tts_settings
+        update_tts_settings({"tts_lang": tts_lang})
+    videoClass.GenerateVoice(voice, custom_audio_path=custom_audio_path, audio_start_time=audio_start_time, audio_end_time=audio_end_time, quality=tts_quality, speed=tts_speed)
 
     videoClass.CombineVideos()
 
     videoClass.GenerateMetadata()
     
+    if use_music:
+        videoClass.AddMusic(True)
+
     videoClass.Stop()
 
 
@@ -382,8 +426,14 @@ def search_and_download():
             }
         ),500
     
+    # Use music video path if music was added
+    if use_music and videoClass.get_final_music_video_path:
+        final_video_raw = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "generated_videos", videoClass.get_final_music_video_path))
+    else:
+        final_video_raw = videoClass.get_final_video_path
+
     # /home/myuser/MoneyPrinter/Backend/static  -> need to return only  /static/**
-    final_video_path = "/static" + videoClass.get_final_video_path.split("/static")[1]
+    final_video_path = "/static" + final_video_raw.split("/static")[1]
     
     # We also have the TTS path and subtitles path, which should be returned as paths accessible via standard static hosting
     final_audio_path = "/static" + videoClass.get_tts_path.split("/static")[1] if videoClass.get_tts_path else None

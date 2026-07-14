@@ -26,6 +26,8 @@ class Shorts:
     7. Combine Videos with the Text-to-Speech [DONE]
     7. Combine Videos with the Text-to-Speech [DONE]
     """
+    # Buffer time in seconds after voice audio ends
+    VIDEO_END_BUFFER = 3.0
     def __init__(self,video_subject: str, paragraph_number: int, ai_model: str,customPrompt: str="", extra_prompt: str = "", script_template: str = ""):
         """
         Constructor for YouTube Class.
@@ -92,6 +94,7 @@ class Shorts:
         self.image_paths = []
         self.image_duration = 5.0
         self.image_durations = []
+        self.clip_duration = self.globalSettings.get("clipDurationSettings", {}).get("default", 10)
 
     @property
     def get_final_video_path(self):
@@ -142,7 +145,6 @@ class Shorts:
         prompt += f"""
         # Initialization:
         - video subject: {self.video_subject}
-        - number of paragraphs: {self.paragraph_number}
         {self.extra_prompt}
         
         """
@@ -166,21 +168,9 @@ class Shorts:
             response = re.sub(r"\[.*\]", "", response)
             response = re.sub(r"\(.*\)", "", response)
 
-            # Split the script into paragraphs
-            paragraphs = response.split("\n\n")
+            self.final_script = response
 
-            # Select the specified number of paragraphs
-            selected_paragraphs = paragraphs[:self.paragraph_number]
-
-            # Join the selected paragraphs into a single string
-            final_script = "\n\n".join(selected_paragraphs)
-
-            # Print to console the number of paragraphs used
-            print(colored(f"Number of paragraphs used: {len(selected_paragraphs)}", "green"))
-
-            self.final_script = final_script
-
-            return final_script
+            return response
         else:
             print(colored("[-] GPT returned an empty response.", "red"))
             return None
@@ -280,7 +270,7 @@ class Shorts:
         # Write the metadata in a json file with the video title as the filename
         self.WriteMetadataToFile(self.video_title, self.video_description, self.video_tags, self.video_post_content, self.suggested_schedule)
         
-    def GenerateVoice(self, voice, custom_audio_path="", audio_start_time=0, audio_end_time=0):
+    def GenerateVoice(self, voice, custom_audio_path="", audio_start_time=0, audio_end_time=0, quality=None, speed=None):
         print(colored(f"[X] Generating voice: {voice} ", "green"))
         global GENERATING
         self.voice = voice
@@ -340,8 +330,8 @@ class Shorts:
                     self.voice,
                     filename=supertonic_path,
                     lang=tts_settings.get("tts_lang", "en"),
-                    quality=tts_settings.get("tts_quality", 8),
-                    speed=tts_settings.get("tts_speed", 1.05),
+                    quality=quality if quality is not None else tts_settings.get("tts_quality", 8),
+                    speed=speed if speed is not None else tts_settings.get("tts_speed", 1.05),
                 )
 
                 if result["success"] and os.path.exists(supertonic_path):
@@ -396,15 +386,19 @@ class Shorts:
         n_threads = 2
         aspect_ratio = getattr(self, "aspect_ratio", "9:16") or "9:16"
         subtitle_template = getattr(self, "subtitle_template", "classic") or "classic"
+
+        clip_duration = getattr(self, "clip_duration", 10)
+
         combined_video_path = combine_videos(
             self.video_paths,
             temp_audio.duration,
-            10,
+            clip_duration,
             n_threads or 2,
             aspect_ratio=aspect_ratio,
             image_paths=self.image_paths if hasattr(self, 'image_paths') else None,
             image_duration=self.image_duration if hasattr(self, 'image_duration') else 5.0,
             image_durations=self.image_durations if hasattr(self, 'image_durations') else None,
+            buffer_time=self.VIDEO_END_BUFFER,
         )
 
         print(colored(f"[-] Next step: {combined_video_path}", "green"))
@@ -418,6 +412,7 @@ class Shorts:
                 self.subtitles_position,
                 subtitle_template=subtitle_template,
                 aspect_ratio=aspect_ratio,
+                buffer_time=self.VIDEO_END_BUFFER,
             )
         except Exception as e:
             print(colored(f"[-] Error generating final video: {e}", "red"))
@@ -490,6 +485,10 @@ class Shorts:
 
             song_clip = AudioFileClip(song_path).set_fps(44100)
             song_clip = song_clip.volumex(0.1).set_fps(44100)
+
+            if song_clip.duration < original_duration:
+                n_loops = int(original_duration / song_clip.duration) + 1
+                song_clip = concatenate_audioclips([song_clip] * n_loops).set_duration(original_duration)
 
             comp_audio = CompositeAudioClip([original_audio, song_clip])
             video_clip = video_clip.set_audio(comp_audio)

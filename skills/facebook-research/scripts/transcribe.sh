@@ -1,15 +1,18 @@
 #!/bin/bash
 # =============================================================================
-# Social Media Research — Transcribe audio files using Whisper
-# Platform-agnostic: works with any audio from any platform
-# Processes all audio files in transcripts/ that don't have a matching .txt
+# Facebook Research — Transcribe downloaded reels with Whisper
+# Processes video files in video-template/downloads/ and writes .txt + .srt
+# to video-template/transcripts/. Skips files already transcribed.
 # Usage: bash scripts/transcribe.sh <project-name> [sessionId] [--session <id>] [--data-root <path>]
+#   Resolves data root via FB_RESEARCH_ROOT, CWD walk-up, or --data-root.
+#   If sessionId given, uses projects/<name>/<session>/video-template/; else latest.
 # =============================================================================
 
 PROJECT=""
 SESSION=""
 DATA_ROOT=""
 
+# Parse args
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --session) SESSION="$2"; shift 2;;
@@ -26,10 +29,11 @@ if [[ -z "$PROJECT" ]]; then
   exit 1
 fi
 
+# Resolve data root
 resolve_data_root() {
-  local dot=".ig-research"
+  local dot=".fb-research"
   if [[ -n "$DATA_ROOT" ]]; then echo "$DATA_ROOT"; return; fi
-  if [[ -n "$IG_RESEARCH_ROOT" ]]; then echo "$IG_RESEARCH_ROOT"; return; fi
+  if [[ -n "$FB_RESEARCH_ROOT" ]]; then echo "$FB_RESEARCH_ROOT"; return; fi
   local dir="$(pwd)"
   while true; do
     if [[ -d "$dir/$dot" ]]; then echo "$dir/$dot"; return; fi
@@ -43,6 +47,7 @@ resolve_data_root() {
 DATA_ROOT_RESOLVED="$(resolve_data_root)"
 PROJECT_DIR="$DATA_ROOT_RESOLVED/projects/$PROJECT"
 
+# Resolve session dir
 SESSION_DIR=""
 if [[ -n "$SESSION" ]]; then
   SESSION_DIR="$PROJECT_DIR/$SESSION"
@@ -53,6 +58,7 @@ elif [[ -f "$PROJECT_DIR/latest.json" ]]; then
   fi
 fi
 if [[ -z "$SESSION_DIR" || ! -d "$SESSION_DIR" ]]; then
+  # fallback: latest timestamp dir
   LATEST_TS=$(ls -1 "$PROJECT_DIR" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}$' | sort | tail -n 1)
   if [[ -n "$LATEST_TS" ]]; then
     SESSION_DIR="$PROJECT_DIR/$LATEST_TS"
@@ -61,29 +67,35 @@ if [[ -z "$SESSION_DIR" || ! -d "$SESSION_DIR" ]]; then
   fi
 fi
 
-TRANSCRIPTS_DIR="$SESSION_DIR/transcripts"
-if [[ ! -d "$TRANSCRIPTS_DIR" && -d "$PROJECT_DIR/transcripts" ]]; then
-  TRANSCRIPTS_DIR="$PROJECT_DIR/transcripts"
+DOWNLOAD_DIR="$SESSION_DIR/video-template/downloads"
+OUT_DIR="$SESSION_DIR/video-template/transcripts"
+
+# Fallback to projectDir legacy if session dir has no downloads but projectDir does
+if [[ ! -d "$DOWNLOAD_DIR" && -d "$PROJECT_DIR/video-template/downloads" ]]; then
+  DOWNLOAD_DIR="$PROJECT_DIR/video-template/downloads"
+  OUT_DIR="$PROJECT_DIR/video-template/transcripts"
   SESSION_DIR="$PROJECT_DIR"
 fi
 
-if [[ ! -d "$TRANSCRIPTS_DIR" ]]; then
-  echo "No transcripts directory found for project: $PROJECT (session: $SESSION_DIR)"
-  echo "Looked in: $TRANSCRIPTS_DIR and $PROJECT_DIR/transcripts"
+if [[ ! -d "$DOWNLOAD_DIR" ]]; then
+  echo "No downloads directory found for project: $PROJECT (session: $SESSION_DIR) (run download-reels first)"
+  echo "Looked in: $DOWNLOAD_DIR and $PROJECT_DIR/video-template/downloads"
   exit 1
 fi
 
-AUDIO_FILES=$(find "$TRANSCRIPTS_DIR" -name "*.mp3" -o -name "*.m4a" -o -name "*.webm" -o -name "*.opus" | sort)
-TOTAL=$(echo "$AUDIO_FILES" | grep -c "." || true)
+mkdir -p "$OUT_DIR"
+
+VIDEO_FILES=$(find "$DOWNLOAD_DIR" -type f \( -name "*.mp4" -o -name "*.webm" -o -name "*.mov" \) | sort)
+TOTAL=$(echo "$VIDEO_FILES" | grep -c "." || true)
 
 if [[ "$TOTAL" -eq 0 ]]; then
-  echo "No audio files to transcribe."
+  echo "No video files to transcribe."
   exit 0
 fi
 
 echo ""
 echo "========================================"
-echo "  Transcribing $TOTAL audio files"
+echo "  Transcribing $TOTAL video files"
 echo "  Project: $PROJECT"
 echo "  Session: $SESSION_DIR"
 echo "========================================"
@@ -92,10 +104,9 @@ echo ""
 DONE=0
 SKIPPED=0
 
-for AUDIO in $AUDIO_FILES; do
-  FILENAME=$(basename "$AUDIO")
-  BASENAME="${FILENAME%.*}"
-  TXT_FILE="$TRANSCRIPTS_DIR/$BASENAME.txt"
+for VIDEO in $VIDEO_FILES; do
+  BASENAME=$(basename "$VIDEO" | sed 's/\.[^.]*$//')
+  TXT_FILE="$OUT_DIR/$BASENAME.txt"
 
   if [[ -f "$TXT_FILE" ]]; then
     SKIPPED=$((SKIPPED + 1))
@@ -105,11 +116,11 @@ for AUDIO in $AUDIO_FILES; do
   DONE=$((DONE + 1))
   echo "  [$DONE/$TOTAL] $BASENAME..."
 
-  python3 -m whisper "$AUDIO" \
-    --model tiny \
-    --language en \
-    --output_format txt \
-    --output_dir "$TRANSCRIPTS_DIR" \
+  python3 -m whisper "$VIDEO" \
+    --model base \
+    --language es \
+    --output_format all \
+    --output_dir "$OUT_DIR" \
     --fp16 False \
     --verbose False \
     2>/dev/null
@@ -124,7 +135,6 @@ done
 echo ""
 echo "========================================"
 echo "  Transcription complete!"
-echo "  Transcribed: $DONE"
-echo "  Skipped (already done): $SKIPPED"
-echo "  Output: $TRANSCRIPTS_DIR"
+echo "  Transcribed: $DONE | Skipped: $SKIPPED"
+echo "  Output: $OUT_DIR"
 echo "========================================"

@@ -21,5 +21,20 @@ node_modules
 Backend/static/generated_videos
 Backend/data
 
+# Claude / Opencode local config (global skills are symlinked from ./skills/)
 .agent
 .claude
+# But keep the committed canonical skills source
+!skills/
+!skills/**
+
+# Research data outputs (dated runs) — keep scripts, ignore generated data
+.fb-research
+
+# Re-ignore node_modules inside bundled/legacy scripts (global node_modules already ignored, but !** un-ignored them)
+skills/**/node_modules/
+skills/**/node_modules/**
+
+.ig-research
+.twitter-research
+.reddit-research

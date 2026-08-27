@@ -36,24 +36,47 @@ def generate_response(prompt: str, ai_model: str) -> str:
         str: The response from the AI model.
     """
 
-    if ai_model == 'g4f':
+    print(colored(f"[*] ai_model received: '{ai_model}'", "cyan"))
+    ai_model = ai_model.split(':')[0] if ':' in ai_model else ai_model
+    if ai_model in ('g4f', 'gpt4', 'gpt3.5-turbo', 'gemini-api', 'gemmini'):
+        if ai_model in ('gemmini', 'gemini-api'):
+            if client is None:
+                raise ValueError("GOOGLE_API_KEY not configured")
+            print(colored("[*] Using Google AI SDK (GOOGLE_API_KEY)", "cyan"))
+            return client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=prompt
+            ).text
+
         from g4f.client import Client as G4FClient
         from g4f import Provider
-        g4f_client = G4FClient(provider=Provider.Gemini)
-        response = g4f_client.chat.completions.create(
-            model="gemini-3.5-flash",
-            messages=[{"role": "user", "content": prompt}],
-            web_search=False
-        )
-        return response.choices[0].message.content
+        from g4f.Provider.needs_auth import Gemini
+        from g4f.cookies import get_cookies
+        import aiohttp
 
-    elif ai_model == 'gemmini':
-        if client is None:
-            raise ValueError("GOOGLE_API_KEY not configured")
-        response = client.models.generate_content(
-            model='gemini-2.0-flash',
-            contents=prompt
-        ).text
+        all_cookies = get_cookies('.google.com', False, True)
+        essential_keys = {'__Secure-1PSID', '__Secure-1PSIDTS', '__Secure-3PSID'}
+        Gemini._cookies = {k: v for k, v in all_cookies.items() if k in essential_keys}
+        print(colored(f"[*] Filtered {len(all_cookies)} cookies -> {len(Gemini._cookies)} essential cookies for Gemini", "cyan"))
+
+        original_init = aiohttp.ClientSession.__init__
+        def _patched_init(self, *args, **kwargs):
+            kwargs.setdefault('max_line_size', 65536)
+            kwargs.setdefault('max_field_size', 65536)
+            return original_init(self, *args, **kwargs)
+        aiohttp.ClientSession.__init__ = _patched_init
+
+        try:
+            g4f_client = G4FClient(provider=Provider.Gemini)
+            response = g4f_client.chat.completions.create(
+                model="gemini-3.5-flash",
+                messages=[{"role": "user", "content": prompt}],
+                web_search=False
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(colored(f"[-] g4f Gemini failed: {e}", "yellow"))
+            raise
 
     else:
         raise ValueError("Invalid AI model selected.")

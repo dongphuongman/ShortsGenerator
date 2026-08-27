@@ -1,0 +1,13 @@
+{
+  "name": "twitter-research",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Twitter/X research tool — scrape topic posts via Chrome DevTools, generate HTML report",
+  "scripts": {
+    "scrape": "node scripts/scrape.js",
+    "report": "node scripts/report-html.js"
+  },
+  "dependencies": {
+    "chrome-remote-interface": "^0.34.0"
+  }
+}

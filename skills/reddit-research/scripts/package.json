@@ -1,0 +1,11 @@
+{
+  "name": "reddit-research",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Reddit research tool — scrape posts via JSON API, generate viral scripts, build MagicSync CSV",
+  "scripts": {
+    "scrape": "node scripts/scrape.js",
+    "csv": "node scripts/build-csv.js"
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,14 @@
+{
+  "name": "social-research",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Social media research tool — scrape, transcribe, analyze top-performing content across platforms",
+  "scripts": {
+    "scrape": "node scripts/scrape.js",
+    "transcribe": "bash scripts/transcribe.sh",
+    "report": "node scripts/report-html.js"
+  },
+  "dependencies": {
+    "chrome-remote-interface": "^0.34.0"
+  }
+}

@@ -832,7 +832,9 @@ const html = `<!DOCTYPE html>
 </body>
 </html>`;
 
-const outputFile = join(projectDir, 'report.html');
+const outputFile = join(effectiveDir, 'report.html');
 writeFileSync(outputFile, html);
+if (effectiveDir !== projectDir) { try { writeFileSync(join(projectDir, 'report.html'), html); } catch {} }
 
-console.log(`\\nReport generated: ${outputFile}`);
+console.log(`\nReport generated: ${outputFile}` + (effectiveDir !== projectDir ? ` (also mirrored to ${projectDir}/report.html)` : ''));
+console.log(`Session: ${effectiveDir}`);

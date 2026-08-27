@@ -1,0 +1,15 @@
+{
+  "name": "facebook-research",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Facebook research tool — scrape page + competitors via Chrome DevTools, generate HTML report, transcribe reels",
+  "scripts": {
+    "scrape": "node scripts/scrape.js",
+    "report": "node scripts/report-html.js",
+    "transcribe": "bash scripts/transcribe.sh",
+    "download": "node scripts/download-reels.js"
+  },
+  "dependencies": {
+    "chrome-remote-interface": "^0.34.0"
+  }
+}
